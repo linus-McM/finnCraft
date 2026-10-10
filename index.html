@@ -1,0 +1,1052 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>Itacaré 3D Trails</title>
+<meta name="description" content="3D terrain and trail map of Itacaré, Bahia with live GPS location.">
+<meta name="theme-color" content="#0b1d26">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<style>
+  :root {
+    --bg: #0b1d26;
+    --panel: rgba(11, 29, 38, 0.88);
+    --text: #eef5f7;
+    --muted: #9fb6bf;
+    --accent: #ffb547;
+    --gps: #2f8cff;
+    --line: rgba(255, 255, 255, 0.14);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--text);
+    font: 14px/1.35 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; overscroll-behavior: none; }
+  #view { position: fixed; inset: 0; touch-action: none; }
+  #view canvas { display: block; }
+
+  /* Floating map labels (beaches, places) */
+  #labels { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+  .label { position: absolute; transform: translate(-50%, -100%); white-space: nowrap; font-size: 12px; font-weight: 600;
+    color: #fff; text-shadow: 0 1px 3px #000, 0 0 2px #000; padding-bottom: 6px; }
+  .label::after { content: ""; position: absolute; left: 50%; bottom: 0; width: 6px; height: 6px; margin-left: -3px;
+    border-radius: 50%; background: currentColor; box-shadow: 0 0 2px #000; }
+  .label.beach { color: #ffe39a; }
+  .label.place { color: #ffffff; font-size: 13px; }
+  .label.poi { color: #9ff0ff; font-weight: 500; }
+
+  .panel { position: fixed; background: var(--panel); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    border: 1px solid var(--line); border-radius: 14px; }
+  #top { top: calc(env(safe-area-inset-top) + 10px); left: 10px; right: 10px; padding: 8px 12px;
+    display: flex; align-items: center; gap: 10px; }
+  #top h1 { font-size: 15px; margin: 0; font-weight: 700; flex: 1; min-width: 0; }
+  #top h1 small { display: block; font-weight: 400; color: var(--muted); font-size: 11px; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; }
+  #compass { width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--line); background: rgba(0,0,0,.25);
+    display: grid; place-items: center; cursor: pointer; flex: none; }
+  #compass svg { width: 26px; height: 26px; }
+
+  #controls { right: 10px; bottom: calc(env(safe-area-inset-bottom) + 14px); display: flex; flex-direction: column;
+    gap: 8px; background: none; border: none; backdrop-filter: none; -webkit-backdrop-filter: none; }
+  .btn { width: 48px; height: 48px; border-radius: 50%; border: 1px solid var(--line); background: var(--panel);
+    color: var(--text); display: grid; place-items: center; cursor: pointer; padding: 0;
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+  .btn svg { width: 24px; height: 24px; }
+  .btn.on { background: var(--gps); border-color: var(--gps); }
+  .btn.rec.on { background: #e5484d; border-color: #e5484d; }
+
+  #sheet { left: 10px; bottom: calc(env(safe-area-inset-bottom) + 14px); width: min(360px, calc(100% - 80px));
+    max-height: 55vh; overflow: auto; padding: 12px 14px; display: none; }
+  #sheet.open { display: block; }
+  #sheet h2 { font-size: 15px; margin: 0 0 4px; padding-right: 28px; }
+  #sheet .sub { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+  #sheet .close { position: absolute; top: 8px; right: 8px; width: 28px; height: 28px; border-radius: 50%; border: none;
+    background: rgba(255,255,255,.08); color: var(--text); font-size: 16px; cursor: pointer; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 8px 0; }
+  .stat { background: rgba(255,255,255,.06); border-radius: 8px; padding: 6px 8px; }
+  .stat b { display: block; font-size: 15px; }
+  .stat span { color: var(--muted); font-size: 11px; }
+  #profile { width: 100%; height: 90px; display: block; }
+  .row { display: flex; gap: 8px; align-items: center; margin: 8px 0; flex-wrap: wrap; }
+  .row label { display: flex; gap: 6px; align-items: center; }
+  .seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { background: none; border: none; color: var(--text); padding: 6px 10px; cursor: pointer; font: inherit; }
+  .seg button.on { background: var(--accent); color: #1b1300; font-weight: 600; }
+  .list { margin: 6px 0 0; padding: 0; list-style: none; }
+  .list li { padding: 8px 4px; border-top: 1px solid var(--line); cursor: pointer; display: flex; gap: 8px; align-items: center; }
+  .list li .sw { width: 14px; height: 4px; border-radius: 2px; flex: none; }
+  .list li .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .list li .km { color: var(--muted); font-size: 12px; }
+  .small { color: var(--muted); font-size: 11px; }
+  input[type=range] { flex: 1; accent-color: var(--accent); }
+  input[type=search] { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
+    background: rgba(0,0,0,.25); color: var(--text); font: inherit; }
+  a { color: var(--accent); }
+  .pill { display: inline-block; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: rgba(255,255,255,.06);
+    color: var(--text); cursor: pointer; font: inherit; }
+
+  #attrib { position: fixed; left: 8px; bottom: calc(env(safe-area-inset-bottom) + 2px); font-size: 9px; color: rgba(255,255,255,.75);
+    text-shadow: 0 0 2px #000; pointer-events: none; }
+  #toast { left: 50%; top: calc(env(safe-area-inset-top) + 70px); transform: translateX(-50%); padding: 8px 14px;
+    max-width: calc(100% - 40px); text-align: center; display: none; z-index: 5; }
+  #toast.show { display: block; }
+
+  #loading { position: fixed; inset: 0; display: grid; place-items: center; background: var(--bg); z-index: 10;
+    transition: opacity .4s; }
+  #loading.hide { opacity: 0; pointer-events: none; }
+  #loading .box { text-align: center; }
+  #loading .bar { width: 200px; height: 4px; background: var(--line); border-radius: 2px; margin: 12px auto 0; overflow: hidden; }
+  #loading .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js" } }
+</script>
+</head>
+<body>
+<div id="view"></div>
+<div id="labels"></div>
+
+<div id="top" class="panel">
+  <h1>Itacaré 3D Trails<small id="status">Loading terrain…</small></h1>
+  <div id="compass" title="Reset to north">
+    <svg viewBox="0 0 24 24"><path d="M12 2 L16 12 L12 10.5 L8 12 Z" fill="#ff5a4f"/><path d="M12 22 L8 12 L12 13.5 L16 12 Z" fill="#cfd8dc"/></svg>
+  </div>
+</div>
+
+<div id="controls" class="panel">
+  <button class="btn" id="btnLayers" title="Layers &amp; settings">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 2 8l10 5 10-5-10-5Z"/><path d="m2 16 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
+  </button>
+  <button class="btn" id="btnTrails" title="Trail list">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19c4-1 3-6 7-7s5-5 9-7"/><circle cx="4" cy="19" r="1.5"/><circle cx="20" cy="5" r="1.5"/></svg>
+  </button>
+  <button class="btn rec" id="btnRec" title="Record my track">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="6" fill="currentColor"/></svg>
+  </button>
+  <button class="btn" id="btnGps" title="Show my location">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+  </button>
+</div>
+
+<div id="sheet" class="panel"><button class="close" id="sheetClose">×</button><div id="sheetBody"></div></div>
+<div id="toast" class="panel"></div>
+<div id="attrib">Imagery © Esri · Trails © OpenStreetMap contributors · Terrain SRTM</div>
+
+<div id="loading"><div class="box"><div>Building 3D Itacaré…</div><div class="bar"><i id="loadbar"></i></div>
+  <div class="small" id="loadmsg" style="margin-top:8px"></div></div></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { MapControls } from './vendor/MapControls.js';
+import { LineSegments2 } from './vendor/LineSegments2.js';
+import { LineSegmentsGeometry } from './vendor/LineSegmentsGeometry.js';
+import { LineMaterial } from './vendor/LineMaterial.js';
+import { Line2 } from './vendor/Line2.js';
+import { LineGeometry } from './vendor/LineGeometry.js';
+
+// ---------------------------------------------------------------------------
+// Settings & small helpers
+// ---------------------------------------------------------------------------
+const TOWN = { lat: -14.2786, lon: -38.9964 };       // Itacaré town centre
+const TRAIL_LIFT = 2.5;                               // metres trails float above ground
+const OVERPASS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+];
+const IMAGERY = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+
+const CATEGORIES = {
+  route:  { label: 'Hiking routes', color: 0xff4fd8, width: 5 },
+  path:   { label: 'Paths & trails', color: 0xffb547, width: 3.5 },
+  track:  { label: 'Dirt tracks', color: 0xd9a066, width: 3 },
+  steps:  { label: 'Steps', color: 0xff6b6b, width: 3 },
+  road:   { label: 'Roads & streets', color: 0xe8eef0, width: 1.6 },
+};
+
+const $ = (id) => document.getElementById(id);
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+const settings = Object.assign({ layer: 'satellite', exaggeration: 1.5, show: { route: true, path: true, track: true, steps: true, road: true, labels: true } },
+  store.get('itacare.settings', {}));
+const saveSettings = () => store.set('itacare.settings', settings);
+
+let toastTimer;
+function toast(msg, ms = 3500) {
+  const t = $('toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('show'), ms);
+}
+function setStatus(msg) { $('status').textContent = msg; }
+function progress(p, msg) { $('loadbar').style.width = Math.round(p * 100) + '%'; if (msg) $('loadmsg').textContent = msg; }
+
+const fmtKm = (m) => m >= 1000 ? (m / 1000).toFixed(m >= 10000 ? 0 : 1) + ' km' : Math.round(m) + ' m';
+function haversine(a, b) {
+  const R = 6371000, toR = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * toR, dLon = (b.lon - a.lon) * toR;
+  const s = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * toR) * Math.cos(b.lat * toR) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+
+// ---------------------------------------------------------------------------
+// Geography: Web Mercator <-> local metres (x = east, z = south, y = up)
+// ---------------------------------------------------------------------------
+const mercX = (lon) => (lon + 180) / 360;
+const mercY = (lat) => { const s = Math.sin(lat * Math.PI / 180); return 0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI); };
+const invMercLon = (mx) => mx * 360 - 180;
+const invMercLat = (my) => Math.atan(Math.sinh(Math.PI * (1 - 2 * my))) * 180 / Math.PI;
+
+let T;            // terrain metadata (from data/terrain.json)
+let heights;      // Float32Array of metres, row-major, north row first
+let MX0, MX1, MY0, MY1;
+
+function toLocal(lat, lon) {
+  return {
+    x: (mercX(lon) - MX0) / (MX1 - MX0) * T.sizeX - T.sizeX / 2,
+    z: (mercY(lat) - MY0) / (MY1 - MY0) * T.sizeZ - T.sizeZ / 2,
+  };
+}
+function toLatLon(x, z) {
+  return {
+    lon: invMercLon(MX0 + (x + T.sizeX / 2) / T.sizeX * (MX1 - MX0)),
+    lat: invMercLat(MY0 + (z + T.sizeZ / 2) / T.sizeZ * (MY1 - MY0)),
+  };
+}
+const inBounds = (lat, lon) => lat >= T.south && lat <= T.north && lon >= T.west && lon <= T.east;
+
+// Bilinear elevation lookup (metres, not exaggerated) at local x/z.
+function heightAt(x, z) {
+  const W = T.width, H = T.height;
+  const c = Math.min(Math.max((x + T.sizeX / 2) / T.sizeX * (W - 1), 0), W - 1.001);
+  const r = Math.min(Math.max((z + T.sizeZ / 2) / T.sizeZ * (H - 1), 0), H - 1.001);
+  const c0 = Math.floor(c), r0 = Math.floor(r), fc = c - c0, fr = r - r0;
+  const i = r0 * W + c0;
+  return heights[i] * (1 - fc) * (1 - fr) + heights[i + 1] * fc * (1 - fr)
+       + heights[i + W] * (1 - fc) * fr + heights[i + W + 1] * fc * fr;
+}
+
+// ---------------------------------------------------------------------------
+// three.js scene
+// ---------------------------------------------------------------------------
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+$('view').appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x9fc9e0);
+scene.fog = new THREE.Fog(0x9fc9e0, 15000, 45000);
+
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 5, 80000);
+const controls = new MapControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.12;
+controls.maxPolarAngle = Math.PI * 0.47;
+controls.minDistance = 80;
+controls.maxDistance = 30000;
+controls.zoomToCursor = true;
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x445544, 1.6));
+const sun = new THREE.DirectionalLight(0xfff2dd, 1.6);
+sun.position.set(-6000, 9000, -4000);   // morning sun from the north-west-ish (southern hemisphere)
+scene.add(sun);
+
+// Everything that follows terrain height lives in `world`, whose y-scale is
+// the vertical exaggeration. Screen-sized markers live outside it.
+const world = new THREE.Group();
+scene.add(world);
+
+let terrainMesh, waterMesh, satTexture, topoTexture;
+const lineMaterials = [];
+
+window.addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  for (const m of lineMaterials) m.resolution.set(innerWidth, innerHeight);
+});
+
+function disposeLine(l) {
+  world.remove(l); l.geometry.dispose(); l.material.dispose();
+  const i = lineMaterials.indexOf(l.material); if (i >= 0) lineMaterials.splice(i, 1);
+}
+
+function makeLineMaterial(color, width, opts = {}) {
+  const m = new LineMaterial({ color, linewidth: width, worldUnits: false, ...opts });
+  m.resolution.set(innerWidth, innerHeight);
+  lineMaterials.push(m);
+  return m;
+}
+
+// ---------------------------------------------------------------------------
+// Terrain
+// ---------------------------------------------------------------------------
+async function loadTerrain() {
+  T = await (await fetch('data/terrain.json')).json();
+  MX0 = mercX(T.west); MX1 = mercX(T.east); MY0 = mercY(T.north); MY1 = mercY(T.south);
+  const raw = new Int16Array(await (await fetch('data/terrain.bin')).arrayBuffer());
+  heights = new Float32Array(raw.length);
+  for (let i = 0; i < raw.length; i++) heights[i] = raw[i] / 10;
+
+  const geo = new THREE.PlaneGeometry(T.sizeX, T.sizeZ, T.width - 1, T.height - 1);
+  geo.rotateX(-Math.PI / 2);
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) pos.setY(i, heights[i]);
+  geo.computeVertexNormals();
+
+  topoTexture = makeTopoTexture();
+  terrainMesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: topoTexture, roughness: 1, metalness: 0 }));
+  world.add(terrainMesh);
+
+  waterMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(T.sizeX * 4, T.sizeZ * 4).rotateX(-Math.PI / 2),
+    new THREE.MeshStandardMaterial({ color: 0x1f6f8b, roughness: 0.25, metalness: 0.1, transparent: true, opacity: 0.88 }));
+  waterMesh.position.y = -0.3;
+  world.add(waterMesh);
+}
+
+// Hypsometric tint + hillshade + contour lines, drawn into a canvas.
+function makeTopoTexture() {
+  const S = 2, W = T.width * S, H = T.height * S;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d');
+  const img = ctx.createImageData(W, H);
+  const cellX = T.sizeX / (T.width - 1), cellZ = T.sizeZ / (T.height - 1);
+  const hs = new Float32Array(W * H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    hs[y * W + x] = heightAt((x / (W - 1) - 0.5) * T.sizeX, (y / (H - 1) - 0.5) * T.sizeZ);
+  }
+  const ramp = [[0, [196, 214, 160]], [20, [150, 190, 120]], [60, [104, 160, 92]], [120, [150, 150, 96]], [200, [190, 160, 120]], [300, [235, 225, 210]]];
+  const tint = (h) => {
+    for (let i = 1; i < ramp.length; i++) if (h <= ramp[i][0]) {
+      const [h0, c0] = ramp[i - 1], [h1, c1] = ramp[i], t = (h - h0) / (h1 - h0);
+      return c0.map((v, k) => v + (c1[k] - v) * t);
+    }
+    return ramp[ramp.length - 1][1];
+  };
+  const lx = -0.6, ly = 0.6, lz = -0.5; // light direction for hillshade
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x, h = hs[i], o = i * 4;
+    if (h < 0) { img.data[o] = 31; img.data[o + 1] = 111; img.data[o + 2] = 139; img.data[o + 3] = 255; continue; }
+    const hl = hs[y * W + Math.max(x - 1, 0)], hr = hs[y * W + Math.min(x + 1, W - 1)];
+    const hu = hs[Math.max(y - 1, 0) * W + x], hd = hs[Math.min(y + 1, H - 1) * W + x];
+    const dx = (hr - hl) / (2 * cellX / S) * 2, dz = (hd - hu) / (2 * cellZ / S) * 2;
+    const len = Math.hypot(dx, 1, dz);
+    const shade = Math.max(0.35, (-dx * lx + ly - dz * lz) / len / Math.hypot(lx, ly, lz)) * 1.15;
+    const c = tint(h);
+    // Contours every 10 m, bolder every 50 m.
+    let k = 1;
+    if (x < W - 1 && y < H - 1) {
+      const a = Math.floor(h / 10), b = Math.floor(hr / 10), d = Math.floor(hd / 10);
+      if (a !== b || a !== d) k = (Math.max(a, b, d) % 5 === 0) ? 0.55 : 0.78;
+    }
+    img.data[o] = Math.min(255, c[0] * shade * k);
+    img.data[o + 1] = Math.min(255, c[1] * shade * k);
+    img.data[o + 2] = Math.min(255, c[2] * shade * k);
+    img.data[o + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return tex;
+}
+
+// Satellite imagery: stitch Esri World Imagery tiles covering the bbox.
+async function loadSatellite(onProgress) {
+  const z = renderer.capabilities.maxTextureSize >= 4096 ? 15 : 14;
+  const n = 2 ** z;
+  const px0 = MX0 * n * 256, px1 = MX1 * n * 256, py0 = MY0 * n * 256, py1 = MY1 * n * 256;
+  const W = Math.round(px1 - px0), H = Math.round(py1 - py0);
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#1f4f5f'; ctx.fillRect(0, 0, W, H);
+  const tiles = [];
+  for (let ty = Math.floor(py0 / 256); ty <= Math.floor(py1 / 256); ty++)
+    for (let tx = Math.floor(px0 / 256); tx <= Math.floor(px1 / 256); tx++) tiles.push([tx, ty]);
+  let done = 0, failed = 0;
+  const loadOne = ([tx, ty]) => new Promise((resolve) => {
+    const im = new Image();
+    im.crossOrigin = 'anonymous';
+    im.onload = () => { ctx.drawImage(im, tx * 256 - px0, ty * 256 - py0); resolve(); };
+    im.onerror = () => { failed++; resolve(); };
+    im.src = IMAGERY.replace('{z}', z).replace('{x}', tx).replace('{y}', ty);
+  }).then(() => onProgress(++done / tiles.length));
+  // Limited concurrency so mobile networks don't choke.
+  const queue = tiles.slice();
+  await Promise.all(Array.from({ length: 8 }, async () => { while (queue.length) await loadOne(queue.shift()); }));
+  if (failed > tiles.length * 0.5) throw new Error('imagery unavailable');
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return tex;
+}
+
+function applyLayer() {
+  const sat = settings.layer === 'satellite' && satTexture;
+  terrainMesh.material.map = sat ? satTexture : topoTexture;
+  terrainMesh.material.needsUpdate = true;
+  waterMesh.visible = !sat;
+}
+
+function applyExaggeration() {
+  world.scale.y = settings.exaggeration;
+}
+
+// ---------------------------------------------------------------------------
+// Trails from OpenStreetMap (Overpass API)
+// ---------------------------------------------------------------------------
+let trails = [];          // { id, name, cat, latlon:[{lat,lon}], pts:[Vector3 base], length }
+let pois = [];            // { name, kind, lat, lon }
+const trailLayers = {};   // cat -> LineSegments2
+
+function classify(tags) {
+  const h = tags.highway;
+  if (h === 'path' || h === 'footway' || h === 'bridleway' || h === 'cycleway' || h === 'pedestrian') return 'path';
+  if (h === 'track') return 'track';
+  if (h === 'steps') return 'steps';
+  if (h) return 'road';
+  return null;
+}
+
+function overpassQuery() {
+  const b = `${T.south},${T.west},${T.north},${T.east}`;
+  return `[out:json][timeout:90];
+(
+  way["highway"~"^(path|footway|track|bridleway|steps|cycleway|pedestrian)$"](${b});
+  way["highway"~"^(primary|secondary|tertiary|unclassified|residential|living_street|service)$"](${b});
+  relation["route"~"^(hiking|foot|walking)$"](${b});
+);
+out geom;
+(
+  nwr["natural"="beach"]["name"](${b});
+  nwr["place"~"^(town|village|hamlet|suburb|neighbourhood)$"]["name"](${b});
+  nwr["natural"~"^(peak|bay|cape)$"]["name"](${b});
+  nwr["waterway"="waterfall"](${b});
+  node["tourism"="viewpoint"](${b});
+);
+out center;`;
+}
+
+async function fetchOSM() {
+  const q = encodeURIComponent(overpassQuery());
+  let lastErr;
+  for (const ep of OVERPASS) {
+    try {
+      const res = await fetch(ep, { method: 'POST', body: 'data=' + q,
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' } });
+      if (!res.ok) throw new Error(`${res.status}`);
+      return await res.json();
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr;
+}
+
+// Trail data is cached with the Cache API (it can be several MB — too big for localStorage).
+const OSM_CACHE = 'itacare-osm-v1', OSM_KEY = 'osm-data.json';
+async function cachedOSM() {
+  try { const r = await (await caches.open(OSM_CACHE)).match(OSM_KEY); return r ? await r.json() : null; } catch { return null; }
+}
+async function saveOSM(osm) {
+  try { await (await caches.open(OSM_CACHE)).put(OSM_KEY, new Response(JSON.stringify(osm), { headers: { 'Content-Type': 'application/json' } })); } catch {}
+}
+
+function densify(latlon) {
+  // Convert to local points and insert extra samples so the line hugs the terrain.
+  const out = [];
+  for (let i = 0; i < latlon.length; i++) {
+    const p = toLocal(latlon[i].lat, latlon[i].lon);
+    if (i > 0) {
+      const q = out[out.length - 1];
+      const d = Math.hypot(p.x - q.x, p.z - q.z), steps = Math.floor(d / 12);
+      for (let s = 1; s < steps; s++) {
+        const t = s / steps, x = q.x + (p.x - q.x) * t, z = q.z + (p.z - q.z) * t;
+        out.push(new THREE.Vector3(x, heightAt(x, z) + TRAIL_LIFT, z));
+      }
+    }
+    out.push(new THREE.Vector3(p.x, heightAt(p.x, p.z) + TRAIL_LIFT, p.z));
+  }
+  return out;
+}
+
+function buildTrails(osm) {
+  trails = []; pois = [];
+  const routeWays = new Set();
+  for (const el of osm.elements) {
+    if (el.type === 'relation' && el.members) {
+      const name = el.tags?.name || 'Hiking route';
+      for (const m of el.members) {
+        if (m.type !== 'way' || !m.geometry || m.geometry.length < 2) continue;
+        routeWays.add(m.ref);
+        trails.push({ id: `r${el.id}-${m.ref}`, rel: el.id, name, cat: 'route', latlon: m.geometry, tags: el.tags || {} });
+      }
+    }
+  }
+  for (const el of osm.elements) {
+    if (el.type === 'way' && el.geometry && el.tags?.highway) {
+      if (routeWays.has(el.id)) continue;
+      const cat = classify(el.tags);
+      if (!cat) continue;
+      const fallback = { path: 'Unnamed trail', track: 'Unnamed track', steps: 'Steps', road: 'Unnamed road' }[cat];
+      trails.push({ id: `w${el.id}`, name: el.tags.name || fallback, cat, latlon: el.geometry, tags: el.tags });
+    } else if (el.tags?.name || el.tags?.waterway === 'waterfall' || el.tags?.tourism === 'viewpoint') {
+      const lat = el.lat ?? el.center?.lat, lon = el.lon ?? el.center?.lon;
+      if (lat == null || !inBounds(lat, lon)) continue;
+      const t = el.tags;
+      const kind = t.natural === 'beach' ? 'beach' : t.place ? 'place' : 'poi';
+      const name = t.name || (t.waterway === 'waterfall' ? 'Waterfall' : 'Viewpoint');
+      pois.push({ name, kind, lat, lon, rank: t.place === 'town' ? 0 : kind === 'beach' ? 1 : t.place === 'village' ? 1 : 2 });
+    }
+  }
+  for (const t of trails) {
+    t.pts = densify(t.latlon);
+    t.length = 0;
+    for (let i = 1; i < t.latlon.length; i++) t.length += haversine(t.latlon[i - 1], t.latlon[i]);
+  }
+
+  // One merged LineSegments2 per category keeps draw calls low.
+  for (const cat of Object.keys(CATEGORIES)) {
+    if (trailLayers[cat]) { disposeLine(trailLayers[cat]); delete trailLayers[cat]; }
+    const segs = [];
+    for (const t of trails) if (t.cat === cat)
+      for (let i = 1; i < t.pts.length; i++) {
+        const a = t.pts[i - 1], b = t.pts[i];
+        segs.push(a.x, a.y, a.z, b.x, b.y, b.z);
+      }
+    if (!segs.length) continue;
+    const g = new LineSegmentsGeometry().setPositions(segs);
+    const line = new LineSegments2(g, makeLineMaterial(CATEGORIES[cat].color, CATEGORIES[cat].width));
+    line.renderOrder = cat === 'road' ? 1 : 2;
+    world.add(line);
+    trailLayers[cat] = line;
+  }
+  applyVisibility();
+  buildLabels();
+}
+
+function applyVisibility() {
+  for (const [cat, l] of Object.entries(trailLayers)) l.visible = settings.show[cat];
+  $('labels').style.display = settings.show.labels ? '' : 'none';
+}
+
+// ---------------------------------------------------------------------------
+// Labels (HTML elements positioned over the canvas each frame)
+// ---------------------------------------------------------------------------
+let labelEls = [];
+function buildLabels() {
+  const root = $('labels'); root.innerHTML = ''; labelEls = [];
+  // De-duplicate by name (beaches are often mapped as several polygons).
+  const seen = new Set();
+  pois.sort((a, b) => a.rank - b.rank);
+  for (const p of pois) {
+    const key = p.kind + p.name;
+    if (seen.has(key)) continue; seen.add(key);
+    const el = document.createElement('div');
+    el.className = 'label ' + p.kind; el.textContent = p.name;
+    root.appendChild(el);
+    const l = toLocal(p.lat, p.lon);
+    labelEls.push({ el, p, pos: new THREE.Vector3(l.x, heightAt(l.x, l.z), l.z), rank: p.rank });
+  }
+}
+const tmpV = new THREE.Vector3();
+function updateLabels() {
+  if (!settings.show.labels) return;
+  const placed = [];
+  const camDist = camera.position.distanceTo(controls.target);
+  for (const L of labelEls) {
+    tmpV.copy(L.pos); tmpV.y *= settings.exaggeration; tmpV.y += 5;
+    const d = tmpV.distanceTo(camera.position);
+    tmpV.project(camera);
+    const visible = tmpV.z < 1 && Math.abs(tmpV.x) < 1.1 && Math.abs(tmpV.y) < 1.1
+      && d < (L.rank === 0 ? 40000 : L.rank === 1 ? Math.max(6000, camDist * 2.2) : Math.max(2500, camDist * 1.2));
+    if (!visible) { L.el.style.display = 'none'; continue; }
+    const sx = (tmpV.x + 1) / 2 * innerWidth, sy = (1 - tmpV.y) / 2 * innerHeight;
+    // Simple collision avoidance: skip labels that would overlap one already placed.
+    if (placed.some(([px, py]) => Math.abs(px - sx) < 70 && Math.abs(py - sy) < 18)) { L.el.style.display = 'none'; continue; }
+    placed.push([sx, sy]);
+    L.el.style.display = '';
+    L.el.style.left = sx + 'px'; L.el.style.top = sy + 'px';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GPS location
+// ---------------------------------------------------------------------------
+const gps = { watchId: null, fix: null, follow: false, track: store.get('itacare.track', []), recording: false };
+
+const meGroup = new THREE.Group(); meGroup.visible = false; scene.add(meGroup);
+const meDot = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), new THREE.MeshBasicMaterial({ color: 0x2f8cff, depthTest: false }));
+const meRing = new THREE.Mesh(new THREE.SphereGeometry(1.45, 24, 16), new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false }));
+const meStem = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 1, 8), new THREE.MeshBasicMaterial({ color: 0x2f8cff }));
+const meAcc = new THREE.Mesh(new THREE.CircleGeometry(1, 48).rotateX(-Math.PI / 2),
+  new THREE.MeshBasicMaterial({ color: 0x2f8cff, transparent: true, opacity: 0.22, depthWrite: false }));
+const meArrow = new THREE.Mesh(new THREE.ConeGeometry(0.7, 1.6, 3).rotateX(-Math.PI / 2).translate(0, 0, -2.3),
+  new THREE.MeshBasicMaterial({ color: 0x2f8cff, depthTest: false }));
+meDot.renderOrder = 11; meRing.renderOrder = 10; meArrow.renderOrder = 11;
+const meHead = new THREE.Group(); meHead.add(meRing, meDot, meArrow);
+meGroup.add(meHead, meStem, meAcc);
+
+let trackLine;
+function drawTrack() {
+  if (trackLine) { disposeLine(trackLine); trackLine = null; }
+  const inside = gps.track.filter((p) => inBounds(p.lat, p.lon));
+  if (inside.length < 2) return;
+  const pts = [];
+  for (const p of inside) { const l = toLocal(p.lat, p.lon); pts.push(l.x, heightAt(l.x, l.z) + TRAIL_LIFT + 1, l.z); }
+  trackLine = new Line2(new LineGeometry().setPositions(pts), makeLineMaterial(0xe5484d, 4));
+  trackLine.renderOrder = 4;
+  world.add(trackLine);
+}
+
+function onPosition(pos) {
+  const { latitude: lat, longitude: lon, accuracy, altitude, heading, speed } = pos.coords;
+  const first = !gps.fix;
+  gps.fix = { lat, lon, accuracy, altitude, heading, speed, t: pos.timestamp };
+  if (!inBounds(lat, lon)) {
+    meGroup.visible = false;
+    const d = haversine({ lat, lon }, TOWN);
+    setStatus(`You are ${fmtKm(d)} from Itacaré, outside the map`);
+    if (first) toast(`You're outside the map area (${fmtKm(d)} from Itacaré). Your dot will appear once you're in range.`, 6000);
+    return;
+  }
+  meGroup.visible = true;
+  if (gps.recording && accuracy < 40) {
+    const last = gps.track[gps.track.length - 1];
+    if (!last || haversine(last, { lat, lon }) > 5) {
+      gps.track.push({ lat, lon, ele: altitude ?? undefined, t: pos.timestamp });
+      store.set('itacare.track', gps.track);
+      drawTrack();
+    }
+  }
+  const near = nearestTrail(lat, lon);
+  const l = toLocal(lat, lon);
+  setStatus(`${lat.toFixed(5)}, ${lon.toFixed(5)} · ${Math.round(heightAt(l.x, l.z))} m · ±${Math.round(accuracy)} m`
+    + (near ? ` · ${fmtKm(near.d)} to ${near.t.name}` : ''));
+  if (first) flyTo(l.x, l.z, 1200);
+}
+
+function nearestTrail(lat, lon) {
+  if (!trails.length) return null;
+  const p = toLocal(lat, lon);
+  let best = null;
+  for (const t of trails) {
+    if (t.cat === 'road') continue;
+    for (const q of t.pts) {
+      const d = Math.hypot(q.x - p.x, q.z - p.z);
+      if (!best || d < best.d) best = { d, t };
+    }
+  }
+  return best;
+}
+
+function updateMarker() {
+  if (!meGroup.visible || !gps.fix) return;
+  const l = toLocal(gps.fix.lat, gps.fix.lon);
+  const ground = heightAt(l.x, l.z) * settings.exaggeration;
+  // Keep the marker a constant size on screen.
+  const dist = camera.position.distanceTo(tmpV.set(l.x, ground, l.z));
+  const s = dist * 0.012;
+  const lift = s * 3;
+  meHead.position.set(l.x, ground + lift, l.z);
+  meHead.scale.setScalar(s);
+  const pulse = 1 + 0.15 * Math.sin(performance.now() / 250);
+  meRing.scale.setScalar(pulse);
+  meStem.position.set(l.x, ground + lift / 2, l.z);
+  meStem.scale.set(s, lift, s);
+  meAcc.position.set(l.x, ground + 1, l.z);
+  meAcc.scale.setScalar(Math.max(gps.fix.accuracy, 3));
+  const hd = gps.fix.heading;
+  meArrow.visible = hd != null && !Number.isNaN(hd) && (gps.fix.speed ?? 0) > 0.5;
+  if (meArrow.visible) meArrow.rotation.y = -hd * Math.PI / 180;
+}
+
+function startGps() {
+  if (!('geolocation' in navigator)) { toast('Geolocation is not available on this device.'); return; }
+  if (!window.isSecureContext) toast('GPS needs HTTPS (or localhost). Open the app from an https:// address.', 6000);
+  if (gps.watchId != null) return;
+  setStatus('Finding your location…');
+  gps.watchId = navigator.geolocation.watchPosition(onPosition, (err) => {
+    toast(err.code === 1 ? 'Location permission denied. Enable it in your browser settings.' : 'Could not get location: ' + err.message, 5000);
+    if (err.code === 1) stopGps();
+  }, { enableHighAccuracy: true, maximumAge: 2000, timeout: 30000 });
+}
+function stopGps() {
+  if (gps.recording) { gps.follow = false; $('btnGps').classList.remove('on'); toast('Location stays on while recording.'); return; }
+  if (gps.watchId != null) navigator.geolocation.clearWatch(gps.watchId);
+  gps.watchId = null; gps.follow = false; meGroup.visible = false;
+  $('btnGps').classList.remove('on');
+}
+
+$('btnGps').addEventListener('click', () => {
+  if (gps.watchId == null) { startGps(); gps.follow = true; $('btnGps').classList.add('on'); toast('Following your location. Drag the map to stop following.'); }
+  else if (!gps.follow && gps.fix && inBounds(gps.fix.lat, gps.fix.lon)) {
+    gps.follow = true; $('btnGps').classList.add('on');
+    const l = toLocal(gps.fix.lat, gps.fix.lon); flyTo(l.x, l.z, 900);
+  } else stopGps();
+});
+controls.addEventListener('start', () => { if (gps.follow) { gps.follow = false; $('btnGps').classList.remove('on'); } });
+
+$('btnRec').addEventListener('click', () => {
+  if (!gps.recording) {
+    if (gps.track.length && !confirm(`Continue the existing track (${gps.track.length} points)? Cancel starts a new one.`)) gps.track = [];
+    gps.recording = true; $('btnRec').classList.add('on');
+    startGps(); store.set('itacare.track', gps.track); drawTrack();
+    toast('Recording your track. Keep the app open.');
+  } else {
+    gps.recording = false; $('btnRec').classList.remove('on');
+    showTrackSheet();
+  }
+});
+
+function trackLength(pts) { let d = 0; for (let i = 1; i < pts.length; i++) d += haversine(pts[i - 1], pts[i]); return d; }
+
+function exportGpx() {
+  const pts = gps.track.map((p) => `      <trkpt lat="${p.lat}" lon="${p.lon}">${p.ele != null ? `<ele>${p.ele.toFixed(1)}</ele>` : ''}<time>${new Date(p.t).toISOString()}</time></trkpt>`).join('\n');
+  const gpx = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="Itacare 3D Trails" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk><name>Itacaré track ${new Date().toISOString().slice(0, 10)}</name><trkseg>
+${pts}
+  </trkseg></trk>
+</gpx>`;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([gpx], { type: 'application/gpx+xml' }));
+  a.download = `itacare-track-${Date.now()}.gpx`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+
+// ---------------------------------------------------------------------------
+// Camera helpers
+// ---------------------------------------------------------------------------
+let flight = null;
+function flyTo(x, z, distance = null) {
+  const ground = heightAt(x, z) * settings.exaggeration;
+  const offset = camera.position.clone().sub(controls.target);
+  if (distance) offset.setLength(distance);
+  const target = new THREE.Vector3(x, ground, z);
+  flight = { fromT: controls.target.clone(), toT: target, fromC: camera.position.clone(), toC: target.clone().add(offset),
+    t0: performance.now(), dur: 1100 };
+}
+function updateFlight() {
+  if (!flight) return;
+  let t = Math.min((performance.now() - flight.t0) / flight.dur, 1);
+  const e = t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2;
+  controls.target.lerpVectors(flight.fromT, flight.toT, e);
+  camera.position.lerpVectors(flight.fromC, flight.toC, e);
+  if (t >= 1) flight = null;
+}
+function clampTarget() {
+  const t = controls.target, hx = T.sizeX / 2, hz = T.sizeZ / 2;
+  const cx = Math.min(Math.max(t.x, -hx), hx), cz = Math.min(Math.max(t.z, -hz), hz);
+  if (cx !== t.x || cz !== t.z) {
+    camera.position.x += cx - t.x; camera.position.z += cz - t.z; t.x = cx; t.z = cz;
+  }
+  // Never let the camera dip under the ground.
+  const g = heightAt(camera.position.x, camera.position.z) * settings.exaggeration + 25;
+  if (camera.position.y < g) camera.position.y = g;
+}
+
+$('compass').addEventListener('click', () => {
+  // Rotate the view back so north is up, keeping distance and tilt.
+  const off = camera.position.clone().sub(controls.target);
+  const flat = Math.hypot(off.x, off.z);
+  flight = { fromT: controls.target.clone(), toT: controls.target.clone(), fromC: camera.position.clone(),
+    toC: controls.target.clone().add(new THREE.Vector3(0, off.y, flat)), t0: performance.now(), dur: 600 };
+});
+function updateCompass() {
+  const off = camera.position.clone().sub(controls.target);
+  const az = Math.atan2(off.x, off.z); // 0 when looking north
+  $('compass').firstElementChild.style.transform = `rotate(${az * 180 / Math.PI}deg)`;
+}
+
+// ---------------------------------------------------------------------------
+// Tapping: pick a trail (screen space) or report terrain under the finger
+// ---------------------------------------------------------------------------
+let downAt = null;
+renderer.domElement.addEventListener('pointerdown', (e) => { downAt = { x: e.clientX, y: e.clientY, t: performance.now() }; });
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (!downAt) return;
+  const moved = Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y);
+  if (moved < 8 && performance.now() - downAt.t < 500) onTap(e.clientX, e.clientY);
+  downAt = null;
+});
+
+function pickTrail(sx, sy) {
+  let best = null;
+  const v = new THREE.Vector3();
+  for (const t of trails) {
+    if (!settings.show[t.cat]) continue;
+    for (let i = 0; i < t.pts.length; i += 1) {
+      v.copy(t.pts[i]); v.y *= settings.exaggeration; v.project(camera);
+      if (v.z > 1) continue;
+      const d = Math.hypot((v.x + 1) / 2 * innerWidth - sx, (1 - v.y) / 2 * innerHeight - sy);
+      // Prefer trails over roads when both are close.
+      const score = d + (t.cat === 'road' ? 10 : 0);
+      if (score < 22 && (!best || score < best.score)) best = { t, score };
+    }
+  }
+  return best?.t;
+}
+
+function groundAtScreen(sx, sy) {
+  // March along the camera ray until it goes below the terrain surface.
+  const ray = new THREE.Raycaster();
+  ray.setFromCamera(new THREE.Vector2(sx / innerWidth * 2 - 1, -(sy / innerHeight) * 2 + 1), camera);
+  const o = ray.ray.origin, d = ray.ray.direction;
+  for (let s = 0; s < 60000; s += 8) {
+    const x = o.x + d.x * s, y = o.y + d.y * s, z = o.z + d.z * s;
+    if (y < -10) return null;
+    if (Math.abs(x) > T.sizeX / 2 || Math.abs(z) > T.sizeZ / 2) continue;
+    if (y <= Math.max(heightAt(x, z), 0) * settings.exaggeration) return { x, z };
+  }
+  return null;
+}
+
+let highlight;
+function onTap(sx, sy) {
+  const t = pickTrail(sx, sy);
+  if (t) { selectTrail(t); return; }
+  const g = groundAtScreen(sx, sy);
+  if (!g) return;
+  const ll = toLatLon(g.x, g.z);
+  const h = heightAt(g.x, g.z);
+  let html = `<h2>${h < 0 ? 'Atlantic Ocean' : 'Terrain'}</h2><div class="sub">${ll.lat.toFixed(5)}, ${ll.lon.toFixed(5)}</div>`;
+  if (h >= 0) html += `<div class="stats"><div class="stat"><b>${Math.round(h)} m</b><span>elevation</span></div>`
+    + (gps.fix ? `<div class="stat"><b>${fmtKm(haversine(gps.fix, ll))}</b><span>from you</span></div>` : '')
+    + `<div class="stat"><b>${fmtKm(haversine(TOWN, ll))}</b><span>from town</span></div></div>`;
+  html += `<div class="row"><a class="pill" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${ll.lat},${ll.lon}&travelmode=walking">Directions ↗</a></div>`;
+  openSheet(html);
+}
+
+function selectTrail(t) {
+  // Gather every piece of the same named route/trail so stats cover the whole thing.
+  const group = t.rel ? trails.filter((o) => o.rel === t.rel)
+    : t.tags?.name ? trails.filter((o) => !o.rel && o.cat === t.cat && o.name === t.name) : [t];
+  if (highlight) highlight.forEach(disposeLine);
+  highlight = group.map((g) => {
+    const pts = []; for (const p of g.pts) pts.push(p.x, p.y + 0.5, p.z);
+    const l = new Line2(new LineGeometry().setPositions(pts), makeLineMaterial(0x00e5ff, 6, { depthTest: false, transparent: true }));
+    l.renderOrder = 5; world.add(l); return l;
+  });
+  // Elevation profile along the trail.
+  const prof = [];
+  let dist = 0;
+  for (const line of chainSegments(group.map((g) => g.latlon), t.latlon)) {
+    for (let i = 0; i < line.length; i++) {
+      if (i > 0) dist += haversine(line[i - 1], line[i]);
+      const l = toLocal(line[i].lat, line[i].lon);
+      prof.push([dist, heightAt(l.x, l.z)]);
+    }
+  }
+  let up = 0, down = 0, min = Infinity, max = -Infinity, last = prof[0][1];
+  for (const [, h] of prof) {
+    min = Math.min(min, h); max = Math.max(max, h);
+    if (Math.abs(h - last) >= 3) { if (h > last) up += h - last; else down += last - h; last = h; } // 3 m hysteresis filters DEM noise
+  }
+  const tg = t.tags || {};
+  const extras = [tg.surface && `surface: ${tg.surface}`, tg.sac_scale && `difficulty: ${tg.sac_scale.replace(/_/g, ' ')}`,
+    tg.trail_visibility && `visibility: ${tg.trail_visibility}`, tg.highway && `type: ${tg.highway}`].filter(Boolean).join(' · ');
+  openSheet(`<h2>${escapeHtml(t.name)}</h2><div class="sub">${CATEGORIES[t.cat].label}${extras ? ' · ' + escapeHtml(extras) : ''}</div>
+    <div class="stats">
+      <div class="stat"><b>${fmtKm(dist)}</b><span>length</span></div>
+      <div class="stat"><b>↑${Math.round(up)} m</b><span>ascent</span></div>
+      <div class="stat"><b>↓${Math.round(down)} m</b><span>descent</span></div>
+      <div class="stat"><b>${Math.round(min)} m</b><span>lowest</span></div>
+      <div class="stat"><b>${Math.round(max)} m</b><span>highest</span></div>
+      <div class="stat"><b>${Math.round(dist / 1000 / 4 * 60 + up / 10)} min</b><span>walk est.</span></div>
+    </div>
+    <canvas id="profile"></canvas>
+    <div class="small">Elevation profile (from SRTM terrain data). Data © OpenStreetMap contributors.</div>`);
+  drawProfile($('profile'), prof);
+  const mid = group[0].pts[Math.floor(group[0].pts.length / 2)];
+  flyTo(mid.x, mid.z, Math.max(600, Math.min(dist * 1.2, 8000)));
+}
+
+// OSM splits a trail into many ways in no particular order. Greedily join
+// pieces end-to-end (flipping where needed) so the profile runs along the trail.
+function chainSegments(lines, start) {
+  const left = lines.filter((l) => l !== start);
+  const same = (a, b) => haversine(a, b) < 15;
+  let chain = start.slice();
+  let grew = true;
+  while (grew && left.length) {
+    grew = false;
+    for (let i = 0; i < left.length; i++) {
+      const s = left[i], head = chain[0], tail = chain[chain.length - 1];
+      if (same(tail, s[0])) chain = chain.concat(s.slice(1));
+      else if (same(tail, s[s.length - 1])) chain = chain.concat(s.slice(0, -1).reverse());
+      else if (same(head, s[s.length - 1])) chain = s.slice(0, -1).concat(chain);
+      else if (same(head, s[0])) chain = s.slice(1).reverse().concat(chain);
+      else continue;
+      left.splice(i, 1); grew = true; break;
+    }
+  }
+  return [chain, ...left]; // disconnected leftovers are appended
+}
+
+function drawProfile(cv, prof) {
+  const dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const ctx = cv.getContext('2d'); ctx.scale(dpr, dpr);
+  const maxD = prof[prof.length - 1][0] || 1;
+  const hs = prof.map((p) => p[1]), lo = Math.min(...hs), hi = Math.max(...hs, lo + 20);
+  const X = (d) => 4 + d / maxD * (W - 8), Y = (h) => H - 14 - (h - lo) / (hi - lo) * (H - 24);
+  ctx.beginPath(); ctx.moveTo(X(0), H - 14);
+  for (const [d, h] of prof) ctx.lineTo(X(d), Y(h));
+  ctx.lineTo(X(maxD), H - 14); ctx.closePath();
+  ctx.fillStyle = 'rgba(255,181,71,.25)'; ctx.fill();
+  ctx.beginPath(); prof.forEach(([d, h], i) => i ? ctx.lineTo(X(d), Y(h)) : ctx.moveTo(X(d), Y(h)));
+  ctx.strokeStyle = '#ffb547'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = '#9fb6bf'; ctx.font = '10px system-ui';
+  ctx.fillText(`${Math.round(hi)} m`, 4, 10); ctx.fillText(`${Math.round(lo)} m`, 4, H - 2);
+  ctx.textAlign = 'right'; ctx.fillText(fmtKm(maxD), W - 4, H - 2);
+}
+
+const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// ---------------------------------------------------------------------------
+// Bottom sheet: layers, trail list, track
+// ---------------------------------------------------------------------------
+function openSheet(html) { $('sheetBody').innerHTML = html; $('sheet').classList.add('open'); }
+function closeSheet() {
+  $('sheet').classList.remove('open');
+  if (highlight) { highlight.forEach(disposeLine); highlight = null; }
+}
+$('sheetClose').addEventListener('click', closeSheet);
+
+$('btnLayers').addEventListener('click', () => {
+  const hex = (c) => '#' + c.toString(16).padStart(6, '0');
+  openSheet(`<h2>Map layers</h2>
+    <div class="row"><div class="seg" id="segLayer">
+      <button data-v="satellite" class="${settings.layer === 'satellite' ? 'on' : ''}">Satellite</button>
+      <button data-v="topo" class="${settings.layer === 'topo' ? 'on' : ''}">Topo / contours</button></div></div>
+    <div class="row"><span>Vertical exaggeration</span><input type="range" id="exag" min="1" max="4" step="0.1" value="${settings.exaggeration}"><b id="exagV">${settings.exaggeration}×</b></div>
+    ${Object.entries(CATEGORIES).map(([k, c]) => `<div class="row"><label><input type="checkbox" data-k="${k}" ${settings.show[k] ? 'checked' : ''}>
+      <span class="sw" style="display:inline-block;width:18px;height:4px;border-radius:2px;background:${hex(c.color)}"></span>${c.label}</label></div>`).join('')}
+    <div class="row"><label><input type="checkbox" data-k="labels" ${settings.show.labels ? 'checked' : ''}>Beach &amp; place names</label></div>
+    <div class="row"><button class="pill" id="refreshOsm">Refresh trail data</button></div>
+    <div class="small">Terrain: SRTM via AWS Terrain Tiles. Imagery: Esri World Imagery. Trails: © OpenStreetMap contributors (ODbL).
+    Contours every 10 m, bold every 50 m.</div>`);
+  $('segLayer').addEventListener('click', (e) => {
+    const v = e.target.dataset.v; if (!v) return;
+    if (v === 'satellite' && !satTexture) toast('Satellite imagery is still loading or unavailable offline.');
+    settings.layer = v; saveSettings(); applyLayer();
+    for (const b of $('segLayer').children) b.classList.toggle('on', b.dataset.v === v);
+  });
+  $('exag').addEventListener('input', (e) => {
+    settings.exaggeration = +e.target.value; $('exagV').textContent = settings.exaggeration + '×';
+    applyExaggeration(); saveSettings();
+  });
+  $('sheetBody').querySelectorAll('input[type=checkbox]').forEach((cb) => cb.addEventListener('change', () => {
+    settings.show[cb.dataset.k] = cb.checked; saveSettings(); applyVisibility();
+  }));
+  $('refreshOsm').addEventListener('click', () => loadTrails(true));
+});
+
+$('btnTrails').addEventListener('click', () => {
+  if (!trails.length) { toast('Trail data has not loaded yet.'); return; }
+  // Combine segments that share a name (OSM splits long trails into many ways).
+  const byName = new Map();
+  for (const t of trails) {
+    if (t.cat === 'road') continue;
+    const key = t.rel ? 'r' + t.rel : (t.tags?.name ? t.cat + t.name : t.id);
+    const e = byName.get(key) || { t, length: 0 };
+    e.length += t.length; byName.set(key, e);
+  }
+  const items = [...byName.values()].filter((e) => e.length > 150).sort((a, b) =>
+    (b.t.cat === 'route') - (a.t.cat === 'route') || (!!b.t.tags?.name - !!a.t.tags?.name) || b.length - a.length);
+  const hex = (c) => '#' + c.toString(16).padStart(6, '0');
+  const render = (q) => items.filter((e) => !q || e.t.name.toLowerCase().includes(q)).slice(0, 200).map((e, i) =>
+    `<li data-i="${items.indexOf(e)}"><span class="sw" style="background:${hex(CATEGORIES[e.t.cat].color)}"></span><span class="nm">${escapeHtml(e.t.name)}</span><span class="km">${fmtKm(e.length)}</span></li>`).join('');
+  openSheet(`<h2>Trails (${items.length})</h2><input type="search" id="q" placeholder="Search trails…"><ul class="list" id="tl">${render('')}</ul>`);
+  $('q').addEventListener('input', (e) => { $('tl').innerHTML = render(e.target.value.toLowerCase()); });
+  $('tl').addEventListener('click', (e) => { const li = e.target.closest('li'); if (li) selectTrail(items[+li.dataset.i].t); });
+});
+
+function showTrackSheet() {
+  const len = trackLength(gps.track);
+  openSheet(`<h2>My track</h2><div class="sub">${gps.track.length} points · ${fmtKm(len)}</div>
+    <div class="row"><button class="pill" id="gpx" ${gps.track.length < 2 ? 'disabled' : ''}>Download GPX</button>
+    <button class="pill" id="clearTrack">Clear track</button></div>`);
+  $('gpx').addEventListener('click', exportGpx);
+  $('clearTrack').addEventListener('click', () => { gps.track = []; store.set('itacare.track', []); drawTrack(); closeSheet(); });
+}
+
+// ---------------------------------------------------------------------------
+// Loading sequence
+// ---------------------------------------------------------------------------
+const trailSummary = () => `${trails.filter((t) => t.cat !== 'road').length} trail segments · tap a trail for details`;
+
+async function loadTrails(force = false) {
+  if (!gps.fix) setStatus('Loading trails from OpenStreetMap…');
+  try {
+    let osm = force ? null : await cachedOSM();
+    if (!osm) {
+      osm = await fetchOSM();
+      saveOSM(osm);
+    }
+    buildTrails(osm);
+    if (!gps.fix) setStatus(trailSummary());
+    if (force) toast('Trail data refreshed.');
+  } catch (e) {
+    console.warn(e);
+    if (!gps.fix) setStatus('Trails unavailable (offline?) — terrain only');
+    toast('Could not load trails from OpenStreetMap. They will load next time you are online.', 5000);
+  }
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  updateFlight();
+  if (gps.follow && gps.fix && !flight && inBounds(gps.fix.lat, gps.fix.lon)) {
+    // Gently keep the target on the user while following.
+    const l = toLocal(gps.fix.lat, gps.fix.lon);
+    const goal = new THREE.Vector3(l.x, heightAt(l.x, l.z) * settings.exaggeration, l.z);
+    const delta = goal.sub(controls.target).multiplyScalar(0.1);
+    controls.target.add(delta); camera.position.add(delta);
+  }
+  controls.update();
+  clampTarget();
+  updateMarker();
+  updateLabels();
+  updateCompass();
+  renderer.render(scene, camera);
+}
+
+async function main() {
+  progress(0.1, 'Loading elevation data…');
+  await loadTerrain();
+  applyExaggeration();
+  progress(0.5, 'Placing camera…');
+  const town = toLocal(TOWN.lat, TOWN.lon);
+  controls.target.set(town.x, 0, town.z + 1500);
+  camera.position.set(town.x + 2500, 3200, town.z + 6500);
+  controls.update();
+  drawTrack();
+  animate();
+  progress(1);
+  setTimeout(() => $('loading').classList.add('hide'), 150);
+
+  // Imagery and trails load in the background; the map is usable meanwhile.
+  loadTrails();
+  setStatus('Loading satellite imagery…');
+  // GPS readouts take priority over loading messages in the status line.
+  loadSatellite((p) => { if (p < 1 && !gps.fix) setStatus(`Loading satellite imagery… ${Math.round(p * 100)}%`); })
+    .then((tex) => { satTexture = tex; applyLayer(); })
+    .catch(() => { toast('Satellite imagery unavailable — showing topo map.'); settings.layer = 'topo'; applyLayer(); })
+    .finally(() => { if (!gps.fix) setStatus(trails.length ? trailSummary() : 'Trails unavailable (offline?) — terrain only'); });
+  applyLayer();
+}
+
+main().catch((e) => { console.error(e); progress(1, 'Failed to load: ' + e.message); });
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW', e)));
+}
+</script>
+</body>
+</html>

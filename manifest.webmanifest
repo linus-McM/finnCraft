@@ -1,0 +1,15 @@
+{
+  "name": "Itacaré 3D Trails",
+  "short_name": "Itacaré 3D",
+  "description": "3D terrain and trail map of Itacaré, Bahia with live GPS location.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#0b1d26",
+  "theme_color": "#0b1d26",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
