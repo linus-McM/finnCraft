@@ -13,7 +13,10 @@ Built with plain HTML + JavaScript and [three.js](https://threejs.org). No build
 - **Trails** loaded from OpenStreetMap, colour-coded by type: hiking routes, paths, dirt tracks, steps and roads.
 - **Tap a trail** to see its length, ascent and descent, lowest and highest points, a walking-time estimate and an elevation profile.
 - **Tap the ground** to see its elevation, its distance from you, and a link for walking directions.
-- **Trail list** with search.
+- **Restaurants, bars and cafés** as markers (from OpenStreetMap), with Google **ratings** if you add an API key (see below).
+  Tap a marker to see its rating, cuisine, opening hours, phone, website, distance and directions.
+  You can filter by type or by minimum rating.
+- **List view** with search: trails, plus a "Food & drink" tab sorted by rating.
 - **Live GPS**: a blue dot with an accuracy circle and a heading arrow. "Follow me" mode keeps the map centred on you.
   The status bar shows your elevation and the nearest trail.
 - **Track recording**: record your walk, see it in 3D (red line), and export it as GPX.
@@ -48,6 +51,20 @@ Browsers only allow GPS on `https://` pages (or `localhost`). The easiest free o
 2. Under "Build and deployment", choose **Deploy from a branch** and pick the branch and `/ (root)`.
 3. After a minute the site is live at `https://<user>.github.io/<repo>/`. Open it on your phone and allow location access.
 4. To install it, use **Add to Home Screen** (Share menu on iPhone Safari, ⋮ menu on Android Chrome).
+
+## Restaurant ratings (optional Google API key)
+
+OpenStreetMap lists the restaurants, bars and cafés but has **no ratings**. Ratings come from the Google Places API, which needs a key:
+
+1. In the [Google Cloud console](https://console.cloud.google.com/), create a project and enable billing
+   (Google includes a monthly free usage allowance).
+2. Enable **Places API (New)**.
+3. Create an API key under **APIs & Services → Credentials**. Restrict it to **Places API (New)**, and set
+   **Website restrictions** to your site (for example `https://<user>.github.io/*`) so nobody else can use it.
+4. In the app, open **Layers → Ratings**, paste the key and tap **Save & load ratings**.
+
+The key is stored only in your browser. One refresh makes up to 18 Text Search requests, and the results are cached for 7 days.
+Google ratings are matched to OpenStreetMap venues by name and location. Places that only Google knows about are added as extra markers.
 
 ## Project layout
 

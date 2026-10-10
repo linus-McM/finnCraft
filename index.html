@@ -38,6 +38,18 @@
   .label.place { color: #ffffff; font-size: 13px; }
   .label.poi { color: #9ff0ff; font-weight: 500; }
 
+  /* Food & drink markers */
+  #venues { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+  .venue { position: absolute; transform: translate(-50%, -100%); pointer-events: auto; cursor: pointer;
+    display: flex; flex-direction: column; align-items: center; }
+  .venue .ic { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 15px;
+    background: #fff; border: 2px solid var(--c); box-shadow: 0 1px 4px rgba(0,0,0,.5); }
+  .venue .rt { margin-top: 2px; font-size: 10px; font-weight: 700; color: #1b1300; background: #ffd34d; border-radius: 6px;
+    padding: 0 4px; box-shadow: 0 1px 2px rgba(0,0,0,.4); }
+  .venue .nm { font-size: 10px; font-weight: 600; color: #fff; text-shadow: 0 1px 2px #000, 0 0 2px #000; white-space: nowrap; }
+  .venue.sel .ic { transform: scale(1.3); border-color: #00e5ff; }
+  .stars { color: #ffd34d; letter-spacing: 1px; }
+
   .panel { position: fixed; background: var(--panel); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
     border: 1px solid var(--line); border-radius: 14px; }
   #top { top: calc(env(safe-area-inset-top) + 10px); left: 10px; right: 10px; padding: 8px 12px;
@@ -85,7 +97,7 @@
   input[type=search] { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
     background: rgba(0,0,0,.25); color: var(--text); font: inherit; }
   a { color: var(--accent); }
-  .pill { display: inline-block; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: rgba(255,255,255,.06);
+  .pill { text-decoration: none; display: inline-block; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: rgba(255,255,255,.06);
     color: var(--text); cursor: pointer; font: inherit; }
 
   #attrib { position: fixed; left: 8px; bottom: calc(env(safe-area-inset-bottom) + 2px); font-size: 9px; color: rgba(255,255,255,.75);
@@ -108,6 +120,7 @@
 <body>
 <div id="view"></div>
 <div id="labels"></div>
+<div id="venues"></div>
 
 <div id="top" class="panel">
   <h1>Itacaré 3D Trails<small id="status">Loading terrain…</small></h1>
@@ -120,7 +133,7 @@
   <button class="btn" id="btnLayers" title="Layers &amp; settings">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3 2 8l10 5 10-5-10-5Z"/><path d="m2 16 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
   </button>
-  <button class="btn" id="btnTrails" title="Trail list">
+  <button class="btn" id="btnTrails" title="Trails, restaurants, bars &amp; cafés">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19c4-1 3-6 7-7s5-5 9-7"/><circle cx="4" cy="19" r="1.5"/><circle cx="20" cy="5" r="1.5"/></svg>
   </button>
   <button class="btn rec" id="btnRec" title="Record my track">
@@ -172,8 +185,11 @@ const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
 };
-const settings = Object.assign({ layer: 'satellite', exaggeration: 1.5, show: { route: true, path: true, track: true, steps: true, road: true, labels: true } },
-  store.get('itacare.settings', {}));
+const savedSettings = store.get('itacare.settings', {});
+const settings = Object.assign({ layer: 'satellite', exaggeration: 1.5, minRating: 0, googleKey: '' }, savedSettings, {
+  show: Object.assign({ route: true, path: true, track: true, steps: true, road: true, labels: true,
+    restaurant: true, bar: true, cafe: true }, savedSettings.show),
+});
 const saveSettings = () => store.set('itacare.settings', settings);
 
 let toastTimer;
@@ -428,6 +444,7 @@ out geom;
   nwr["natural"~"^(peak|bay|cape)$"]["name"](${b});
   nwr["waterway"="waterfall"](${b});
   node["tourism"="viewpoint"](${b});
+  nwr["amenity"~"^(restaurant|fast_food|bar|pub|biergarten|cafe|ice_cream)$"](${b});
 );
 out center;`;
 }
@@ -447,7 +464,7 @@ async function fetchOSM() {
 }
 
 // Trail data is cached with the Cache API (it can be several MB — too big for localStorage).
-const OSM_CACHE = 'itacare-osm-v1', OSM_KEY = 'osm-data.json';
+const OSM_CACHE = 'itacare-osm-v2', OSM_KEY = 'osm-data.json';
 async function cachedOSM() {
   try { const r = await (await caches.open(OSM_CACHE)).match(OSM_KEY); return r ? await r.json() : null; } catch { return null; }
 }
@@ -474,7 +491,7 @@ function densify(latlon) {
 }
 
 function buildTrails(osm) {
-  trails = []; pois = [];
+  trails = []; pois = []; venues = [];
   const routeWays = new Set();
   for (const el of osm.elements) {
     if (el.type === 'relation' && el.members) {
@@ -493,6 +510,12 @@ function buildTrails(osm) {
       if (!cat) continue;
       const fallback = { path: 'Unnamed trail', track: 'Unnamed track', steps: 'Steps', road: 'Unnamed road' }[cat];
       trails.push({ id: `w${el.id}`, name: el.tags.name || fallback, cat, latlon: el.geometry, tags: el.tags });
+    } else if (AMENITY[el.tags?.amenity]) {
+      const lat = el.lat ?? el.center?.lat, lon = el.lon ?? el.center?.lon;
+      if (lat == null || !inBounds(lat, lon)) continue;
+      const a = AMENITY[el.tags.amenity];
+      venues.push({ id: `${el.type[0]}${el.id}`, name: el.tags.name || VENUE_GROUPS[a.group].unnamed, group: a.group, icon: a.icon,
+        kind: a.label, lat, lon, tags: el.tags });
     } else if (el.tags?.name || el.tags?.waterway === 'waterfall' || el.tags?.tourism === 'viewpoint') {
       const lat = el.lat ?? el.center?.lat, lon = el.lon ?? el.center?.lon;
       if (lat == null || !inBounds(lat, lon)) continue;
@@ -524,13 +547,15 @@ function buildTrails(osm) {
     world.add(line);
     trailLayers[cat] = line;
   }
-  applyVisibility();
   buildLabels();
+  applyRatings();
+  applyVisibility();
 }
 
 function applyVisibility() {
   for (const [cat, l] of Object.entries(trailLayers)) l.visible = settings.show[cat];
   $('labels').style.display = settings.show.labels ? '' : 'none';
+  for (const V of venueEls) V.hidden = !venueVisible(V.v);
 }
 
 // ---------------------------------------------------------------------------
@@ -570,6 +595,216 @@ function updateLabels() {
     placed.push([sx, sy]);
     L.el.style.display = '';
     L.el.style.left = sx + 'px'; L.el.style.top = sy + 'px';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Food & drink: restaurants, bars and cafés from OpenStreetMap, with optional
+// ratings from the Google Places API (OSM itself has no ratings).
+// ---------------------------------------------------------------------------
+const VENUE_GROUPS = {
+  restaurant: { label: 'Restaurants', color: '#ff7a59', unnamed: 'Restaurant' },
+  bar:        { label: 'Bars', color: '#b47bff', unnamed: 'Bar' },
+  cafe:       { label: 'Cafés', color: '#c8915a', unnamed: 'Café' },
+};
+const AMENITY = {
+  restaurant: { group: 'restaurant', icon: '🍽️', label: 'Restaurant' },
+  fast_food:  { group: 'restaurant', icon: '🍔', label: 'Fast food' },
+  bar:        { group: 'bar', icon: '🍹', label: 'Bar' },
+  pub:        { group: 'bar', icon: '🍺', label: 'Pub' },
+  biergarten: { group: 'bar', icon: '🍺', label: 'Beer garden' },
+  cafe:       { group: 'cafe', icon: '☕', label: 'Café' },
+  ice_cream:  { group: 'cafe', icon: '🍦', label: 'Ice cream' },
+};
+
+let venues = [];     // { id, name, group, icon, kind, lat, lon, tags, rating?, ratingCount?, gUri?, price? }
+let venueEls = [];
+let googlePlaces = null;  // last Google Places result (cached)
+let selectedVenue = null;
+
+const venueVisible = (v) => settings.show[v.group]
+  && (!settings.minRating || (v.rating != null && v.rating >= settings.minRating));
+
+function buildVenueMarkers() {
+  const root = $('venues'); root.innerHTML = ''; venueEls = [];
+  // Best-rated first so they win the collision culling when markers overlap.
+  const sorted = venues.slice().sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0) || (b.ratingCount ?? 0) - (a.ratingCount ?? 0));
+  for (const v of sorted) {
+    const el = document.createElement('div');
+    el.className = 'venue';
+    el.style.setProperty('--c', VENUE_GROUPS[v.group].color);
+    el.innerHTML = `<span class="ic">${v.icon}</span>${v.rating != null ? `<span class="rt">${v.rating.toFixed(1)}★</span>` : ''}<span class="nm"></span>`;
+    el.querySelector('.nm').textContent = v.name;
+    el.addEventListener('click', (e) => { e.stopPropagation(); selectVenue(v); });
+    root.appendChild(el);
+    const l = toLocal(v.lat, v.lon);
+    venueEls.push({ el, v, pos: new THREE.Vector3(l.x, heightAt(l.x, l.z), l.z), hidden: !venueVisible(v), shown: true });
+  }
+}
+
+function updateVenues() {
+  const placed = [];
+  const camDist = camera.position.distanceTo(controls.target);
+  const showNames = camDist < 1500;
+  for (const V of venueEls) {
+    let ok = !V.hidden;
+    let sx, sy;
+    if (ok) {
+      tmpV.copy(V.pos); tmpV.y *= settings.exaggeration;
+      const d = tmpV.distanceTo(camera.position);
+      tmpV.project(camera);
+      ok = tmpV.z < 1 && Math.abs(tmpV.x) < 1.1 && Math.abs(tmpV.y) < 1.1 && d < Math.max(2500, camDist * 1.6);
+      sx = (tmpV.x + 1) / 2 * innerWidth; sy = (1 - tmpV.y) / 2 * innerHeight;
+      const w = showNames ? 80 : 30;
+      if (ok && V.v !== selectedVenue && placed.some(([px, py]) => Math.abs(px - sx) < w && Math.abs(py - sy) < 34)) ok = false;
+    }
+    if (!ok) { if (V.shown) { V.el.style.display = 'none'; V.shown = false; } continue; }
+    placed.push([sx, sy]);
+    if (!V.shown) { V.el.style.display = ''; V.shown = true; }
+    V.el.style.left = sx + 'px'; V.el.style.top = sy + 'px';
+    V.el.classList.toggle('sel', V.v === selectedVenue);
+    V.el.lastChild.style.display = showNames || V.v === selectedVenue ? '' : 'none';
+  }
+}
+
+const stars = (r) => '★'.repeat(Math.round(r)) + '☆'.repeat(5 - Math.round(r));
+
+function selectVenue(v) {
+  selectedVenue = v;
+  const t = v.tags || {};
+  const l = toLocal(v.lat, v.lon);
+  const cuisine = t.cuisine ? t.cuisine.split(';').map((c) => c.replace(/_/g, ' ')).join(', ') : '';
+  const website = t.website || t['contact:website'];
+  const phone = t.phone || t['contact:phone'];
+  const insta = t['contact:instagram'];
+  const mapsUrl = v.gUri || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(v.name + ' Itacaré')}`;
+  const ratingHtml = v.rating != null
+    ? `<div class="row"><span class="stars">${stars(v.rating)}</span><b>${v.rating.toFixed(1)}</b><span class="small">${v.ratingCount ?? 0} Google reviews${v.price ? ' · ' + v.price : ''}</span></div>`
+    : `<div class="small" style="margin:6px 0">No rating yet${settings.googleKey ? '' : ' — add a Google API key in Layers to load ratings'}.</div>`;
+  openSheet(`<h2>${v.icon} ${escapeHtml(v.name)}</h2>
+    <div class="sub">${escapeHtml(v.kind)}${cuisine ? ' · ' + escapeHtml(cuisine) : ''}${v.openNow != null ? (v.openNow ? ' · <b style="color:#5be38a">Open now</b>' : ' · <b style="color:#ff8a8a">Closed now</b>') : ''}</div>
+    ${ratingHtml}
+    <div class="stats">
+      ${gps.fix ? `<div class="stat"><b>${fmtKm(haversine(gps.fix, v))}</b><span>from you</span></div>` : ''}
+      <div class="stat"><b>${fmtKm(haversine(TOWN, v))}</b><span>from town</span></div>
+      <div class="stat"><b>${Math.round(Math.max(heightAt(l.x, l.z), 0))} m</b><span>elevation</span></div>
+    </div>
+    ${t.opening_hours ? `<div class="small">Hours: ${escapeHtml(t.opening_hours)}</div>` : ''}
+    <div class="row">
+      <a class="pill" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${v.lat},${v.lon}&travelmode=walking">Directions ↗</a>
+      <a class="pill" target="_blank" rel="noopener" href="${escapeHtml(mapsUrl)}">Google Maps ↗</a>
+      ${phone ? `<a class="pill" href="tel:${escapeHtml(phone.replace(/\s/g, ''))}">Call</a>` : ''}
+      ${website ? `<a class="pill" target="_blank" rel="noopener" href="${escapeHtml(website)}">Website ↗</a>` : ''}
+      ${insta ? `<a class="pill" target="_blank" rel="noopener" href="${escapeHtml(insta.startsWith('http') ? insta : 'https://instagram.com/' + insta.replace('@', ''))}">Instagram ↗</a>` : ''}
+    </div>
+    <div class="small">${v.source === 'google' ? 'Listing from Google Places.' : 'Listing © OpenStreetMap contributors.'}${v.rating != null ? ' Rating from Google.' : ''}</div>`);
+  flyTo(l.x, l.z, Math.min(camera.position.distanceTo(controls.target), 900));
+}
+
+// --- Google Places ratings -------------------------------------------------
+const RATINGS_CACHE = 'itacare-ratings-v1', RATINGS_KEY = 'google-places.json';
+const RATINGS_MAX_AGE = 7 * 24 * 3600 * 1000;  // refetch weekly at most
+
+async function fetchGooglePlaces(key) {
+  // Text Search returns at most 60 results per query (3 pages of 20), so search
+  // the busy town centre separately from the whole map area.
+  const regions = [
+    { low: { latitude: -14.2960, longitude: -39.0040 }, high: { latitude: -14.2700, longitude: -38.9820 } },
+    { low: { latitude: T.south, longitude: T.west }, high: { latitude: T.north, longitude: T.east } },
+  ];
+  const queries = [['restaurant', 'restaurants'], ['bar', 'bars'], ['cafe', 'cafes and coffee']];
+  const found = new Map();
+  for (const rect of regions) for (const [type, text] of queries) {
+    let pageToken;
+    for (let page = 0; page < 3; page++) {
+      const res = await fetch('https://places.googleapis.com/v1/places:searchText', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': key,
+          'X-Goog-FieldMask': 'places.id,places.displayName,places.location,places.rating,places.userRatingCount,'
+            + 'places.primaryType,places.types,places.googleMapsUri,places.priceLevel,places.currentOpeningHours.openNow,nextPageToken',
+        },
+        body: JSON.stringify({ textQuery: text, includedType: type, locationRestriction: { rectangle: rect }, pageSize: 20, pageToken }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error?.message || `HTTP ${res.status}`);
+      for (const p of json.places || []) found.set(p.id, p);
+      pageToken = json.nextPageToken;
+      if (!pageToken) break;
+    }
+  }
+  return [...found.values()];
+}
+
+const plainName = (s) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+const normName = (s) => plainName(s)
+  .replace(/\b(restaurante|restaurant|bar|cafe|cafeteria|pizzaria|pousada|lanchonete|do|da|de|the|e)\b/g, '')
+  .replace(/[^a-z0-9]/g, '');
+// Same place? Compare names without filler words ("Restaurante", "Bar do"…);
+// short leftovers like "ze" must match the full name exactly instead.
+function sameName(a, b) {
+  const x = normName(a), y = normName(b);
+  if (Math.min(x.length, y.length) >= 3 && (x.includes(y) || y.includes(x))) return true;
+  return plainName(a).replace(/[^a-z0-9]/g, '') === plainName(b).replace(/[^a-z0-9]/g, '');
+}
+
+function googleGroup(p) {
+  const types = [p.primaryType, ...(p.types || [])];
+  if (types.some((t) => ['bar', 'pub', 'night_club', 'wine_bar', 'cocktail_bar', 'bar_and_grill'].includes(t)) && !types.includes('restaurant')) return 'bar';
+  if (types.some((t) => ['cafe', 'coffee_shop', 'ice_cream_shop', 'bakery', 'tea_house', 'acai_shop', 'juice_shop'].includes(t))
+    && p.primaryType !== 'restaurant') return 'cafe';
+  return 'restaurant';
+}
+
+// Attach Google ratings to OSM venues (matched by name within ~100 m) and add
+// Google-only places as new markers.
+function applyRatings() {
+  if (googlePlaces) {
+    venues = venues.filter((v) => v.source !== 'google');
+    for (const v of venues) delete v.rating;
+    for (const p of googlePlaces) {
+      const lat = p.location?.latitude, lon = p.location?.longitude;
+      if (lat == null || !inBounds(lat, lon)) continue;
+      const name = p.displayName?.text || 'Unnamed';
+      let match = null, best = 100;
+      for (const v of venues) {
+        if (v.rating != null || v.source === 'google' || !v.tags?.name || !sameName(v.name, name)) continue;
+        const d = haversine(v, { lat, lon });
+        if (d < best) { best = d; match = v; }
+      }
+      const price = { PRICE_LEVEL_INEXPENSIVE: '$', PRICE_LEVEL_MODERATE: '$$', PRICE_LEVEL_EXPENSIVE: '$$$', PRICE_LEVEL_VERY_EXPENSIVE: '$$$$' }[p.priceLevel];
+      const info = { rating: p.rating, ratingCount: p.userRatingCount, gUri: p.googleMapsUri, price, openNow: p.currentOpeningHours?.openNow };
+      if (p.rating == null) delete info.rating;
+      if (match) Object.assign(match, info);
+      else {
+        const group = googleGroup(p);
+        const icon = group === 'bar' ? '🍹' : group === 'cafe' ? '☕' : '🍽️';
+        venues.push({ id: 'g' + p.id, name, group, icon, kind: VENUE_GROUPS[group].unnamed, lat, lon, tags: {}, source: 'google', ...info });
+      }
+    }
+  }
+  buildVenueMarkers();
+}
+
+async function loadRatings(force = false) {
+  const key = settings.googleKey;
+  if (!key) return;
+  try {
+    const cache = await caches.open(RATINGS_CACHE);
+    const hit = force ? null : await cache.match(RATINGS_KEY);
+    const cached = hit ? await hit.json() : null;
+    if (cached && Date.now() - cached.t < RATINGS_MAX_AGE) googlePlaces = cached.places;
+    else {
+      if (force) toast('Loading ratings from Google…');
+      googlePlaces = await fetchGooglePlaces(key);
+      await cache.put(RATINGS_KEY, new Response(JSON.stringify({ t: Date.now(), places: googlePlaces })));
+      toast(`Loaded ratings for ${googlePlaces.filter((p) => p.rating != null).length} places.`);
+    }
+    if (venues.length || googlePlaces.length) { applyRatings(); applyVisibility(); }
+  } catch (e) {
+    console.warn(e);
+    toast('Could not load Google ratings: ' + e.message, 7000);
   }
 }
 
@@ -915,6 +1150,7 @@ function openSheet(html) { $('sheetBody').innerHTML = html; $('sheet').classList
 function closeSheet() {
   $('sheet').classList.remove('open');
   if (highlight) { highlight.forEach(disposeLine); highlight = null; }
+  selectedVenue = null;
 }
 $('sheetClose').addEventListener('click', closeSheet);
 
@@ -928,7 +1164,15 @@ $('btnLayers').addEventListener('click', () => {
     ${Object.entries(CATEGORIES).map(([k, c]) => `<div class="row"><label><input type="checkbox" data-k="${k}" ${settings.show[k] ? 'checked' : ''}>
       <span class="sw" style="display:inline-block;width:18px;height:4px;border-radius:2px;background:${hex(c.color)}"></span>${c.label}</label></div>`).join('')}
     <div class="row"><label><input type="checkbox" data-k="labels" ${settings.show.labels ? 'checked' : ''}>Beach &amp; place names</label></div>
-    <div class="row"><button class="pill" id="refreshOsm">Refresh trail data</button></div>
+    ${Object.entries(VENUE_GROUPS).map(([k, g]) => `<div class="row"><label><input type="checkbox" data-k="${k}" ${settings.show[k] ? 'checked' : ''}>
+      <span style="display:inline-block;width:10px;height:10px;border-radius:50%;border:2px solid ${g.color}"></span>${g.label}</label></div>`).join('')}
+    <div class="row"><span>Minimum rating</span><input type="range" id="minRating" min="0" max="4.8" step="0.1" value="${settings.minRating}"><b id="minRatingV">${settings.minRating ? settings.minRating.toFixed(1) + '★' : 'any'}</b></div>
+    <div class="row"><button class="pill" id="refreshOsm">Refresh trail &amp; venue data</button></div>
+    <h2 style="margin-top:14px">Ratings (optional)</h2>
+    <div class="small">OpenStreetMap has no ratings. To show Google ratings, paste a Google Maps Platform API key with
+      <b>Places API (New)</b> enabled. The key is stored only on this device. Results are cached for a week.</div>
+    <div class="row"><input type="search" id="gkey" placeholder="Google API key" value="${escapeHtml(settings.googleKey)}" autocomplete="off" spellcheck="false"></div>
+    <div class="row"><button class="pill" id="saveKey">Save &amp; load ratings</button>${settings.googleKey ? '<button class="pill" id="clearKey">Remove key</button>' : ''}</div>
     <div class="small">Terrain: SRTM via AWS Terrain Tiles. Imagery: Esri World Imagery. Trails: © OpenStreetMap contributors (ODbL).
     Contours every 10 m, bold every 50 m.</div>`);
   $('segLayer').addEventListener('click', (e) => {
@@ -945,9 +1189,65 @@ $('btnLayers').addEventListener('click', () => {
     settings.show[cb.dataset.k] = cb.checked; saveSettings(); applyVisibility();
   }));
   $('refreshOsm').addEventListener('click', () => loadTrails(true));
+  $('minRating').addEventListener('input', (e) => {
+    settings.minRating = +e.target.value;
+    $('minRatingV').textContent = settings.minRating ? settings.minRating.toFixed(1) + '★' : 'any';
+    if (settings.minRating && !settings.googleKey) toast('Ratings need a Google API key (see below). Unrated places are hidden.');
+    saveSettings(); applyVisibility();
+  });
+  $('saveKey').addEventListener('click', () => {
+    settings.googleKey = $('gkey').value.trim(); saveSettings();
+    if (settings.googleKey) loadRatings(true);
+  });
+  $('clearKey')?.addEventListener('click', async () => {
+    settings.googleKey = ''; saveSettings(); googlePlaces = null;
+    try { await caches.delete(RATINGS_CACHE); } catch {}
+    venues = venues.filter((v) => v.source !== 'google');
+    for (const v of venues) for (const k of ['rating', 'ratingCount', 'gUri', 'price', 'openNow']) delete v[k];
+    buildVenueMarkers(); applyVisibility(); $('btnLayers').click();
+  });
 });
 
-$('btnTrails').addEventListener('click', () => {
+let listTab = 'trails';
+$('btnTrails').addEventListener('click', () => (listTab === 'food' ? showFoodList() : showTrailList()));
+const listTabs = (on) => `<div class="row"><div class="seg" id="listTabs">
+  <button data-v="trails" class="${on === 'trails' ? 'on' : ''}">Trails</button>
+  <button data-v="food" class="${on === 'food' ? 'on' : ''}">Food &amp; drink</button></div></div>`;
+function bindListTabs() {
+  $('listTabs').addEventListener('click', (e) => {
+    const v = e.target.dataset.v; if (!v) return;
+    listTab = v; v === 'food' ? showFoodList() : showTrailList();
+  });
+}
+
+function showFoodList() {
+  if (!venues.length) { openSheet(listTabs('food') + '<div class="small">No restaurants, bars or cafés loaded yet.</div>'); bindListTabs(); return; }
+  let group = 'all';
+  const items = venues.slice().sort((a, b) => (b.rating ?? -1) - (a.rating ?? -1) || (b.ratingCount ?? 0) - (a.ratingCount ?? 0)
+    || a.name.localeCompare(b.name));
+  const render = () => {
+    const q = $('q').value.toLowerCase();
+    return items.filter((v) => (group === 'all' || v.group === group) && (!q || v.name.toLowerCase().includes(q)
+      || (v.tags?.cuisine || '').toLowerCase().includes(q))).slice(0, 300).map((v) =>
+      `<li data-i="${items.indexOf(v)}"><span>${v.icon}</span><span class="nm">${escapeHtml(v.name)}</span>`
+      + `<span class="km">${v.rating != null ? `<b style="color:#ffd34d">${v.rating.toFixed(1)}★</b> ` : ''}${gps.fix ? fmtKm(haversine(gps.fix, v)) : ''}</span></li>`).join('');
+  };
+  openSheet(`${listTabs('food')}<div class="row"><div class="seg" id="grp"><button data-v="all" class="on">All</button>
+    ${Object.entries(VENUE_GROUPS).map(([k, g]) => `<button data-v="${k}">${g.label}</button>`).join('')}</div></div>
+    <input type="search" id="q" placeholder="Search name or cuisine…"><ul class="list" id="tl"></ul>
+    ${settings.googleKey ? '' : '<div class="small" style="margin-top:6px">Tip: add a Google API key in Layers to see ratings.</div>'}`);
+  bindListTabs();
+  $('tl').innerHTML = render();
+  $('q').addEventListener('input', () => { $('tl').innerHTML = render(); });
+  $('grp').addEventListener('click', (e) => {
+    const v = e.target.dataset.v; if (!v) return; group = v;
+    for (const b of $('grp').children) b.classList.toggle('on', b.dataset.v === v);
+    $('tl').innerHTML = render();
+  });
+  $('tl').addEventListener('click', (e) => { const li = e.target.closest('li'); if (li) selectVenue(items[+li.dataset.i]); });
+}
+
+function showTrailList() {
   if (!trails.length) { toast('Trail data has not loaded yet.'); return; }
   // Combine segments that share a name (OSM splits long trails into many ways).
   const byName = new Map();
@@ -962,10 +1262,11 @@ $('btnTrails').addEventListener('click', () => {
   const hex = (c) => '#' + c.toString(16).padStart(6, '0');
   const render = (q) => items.filter((e) => !q || e.t.name.toLowerCase().includes(q)).slice(0, 200).map((e, i) =>
     `<li data-i="${items.indexOf(e)}"><span class="sw" style="background:${hex(CATEGORIES[e.t.cat].color)}"></span><span class="nm">${escapeHtml(e.t.name)}</span><span class="km">${fmtKm(e.length)}</span></li>`).join('');
-  openSheet(`<h2>Trails (${items.length})</h2><input type="search" id="q" placeholder="Search trails…"><ul class="list" id="tl">${render('')}</ul>`);
+  openSheet(`${listTabs('trails')}<input type="search" id="q" placeholder="Search ${items.length} trails…"><ul class="list" id="tl">${render('')}</ul>`);
+  bindListTabs();
   $('q').addEventListener('input', (e) => { $('tl').innerHTML = render(e.target.value.toLowerCase()); });
   $('tl').addEventListener('click', (e) => { const li = e.target.closest('li'); if (li) selectTrail(items[+li.dataset.i].t); });
-});
+}
 
 function showTrackSheet() {
   const len = trackLength(gps.track);
@@ -1013,6 +1314,7 @@ function animate() {
   clampTarget();
   updateMarker();
   updateLabels();
+  updateVenues();
   updateCompass();
   renderer.render(scene, camera);
 }
@@ -1031,8 +1333,8 @@ async function main() {
   progress(1);
   setTimeout(() => $('loading').classList.add('hide'), 150);
 
-  // Imagery and trails load in the background; the map is usable meanwhile.
-  loadTrails();
+  // Imagery, trails and ratings load in the background; the map is usable meanwhile.
+  loadTrails().then(() => loadRatings());
   setStatus('Loading satellite imagery…');
   // GPS readouts take priority over loading messages in the status line.
   loadSatellite((p) => { if (p < 1 && !gps.fix) setStatus(`Loading satellite imagery… ${Math.round(p * 100)}%`); })
