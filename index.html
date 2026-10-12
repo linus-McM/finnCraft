@@ -113,6 +113,7 @@
   #loading .bar { width: 200px; height: 4px; background: var(--line); border-radius: 2px; margin: 12px auto 0; overflow: hidden; }
   #loading .bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
 </style>
+<script src="config.js"></script>
 <script type="importmap">
 { "imports": { "three": "./vendor/three.module.min.js" } }
 </script>
@@ -186,11 +187,14 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
 };
 const savedSettings = store.get('itacare.settings', {});
+const BUILT_IN_KEY = (window.ITACARE_CONFIG && window.ITACARE_CONFIG.googleKey) || '';
 const settings = Object.assign({ layer: 'satellite', exaggeration: 1.5, minRating: 0, googleKey: '' }, savedSettings, {
   show: Object.assign({ route: true, path: true, track: true, steps: true, road: true, labels: true,
     restaurant: true, bar: true, cafe: true }, savedSettings.show),
 });
 const saveSettings = () => store.set('itacare.settings', settings);
+// The key pasted in Layers wins; otherwise the one baked in at deploy time.
+const googleKey = () => settings.googleKey || BUILT_IN_KEY;
 
 let toastTimer;
 function toast(msg, ms = 3500) {
@@ -680,7 +684,7 @@ function selectVenue(v) {
   const mapsUrl = v.gUri || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(v.name + ' Itacaré')}`;
   const ratingHtml = v.rating != null
     ? `<div class="row"><span class="stars">${stars(v.rating)}</span><b>${v.rating.toFixed(1)}</b><span class="small">${v.ratingCount ?? 0} Google reviews${v.price ? ' · ' + v.price : ''}</span></div>`
-    : `<div class="small" style="margin:6px 0">No rating yet${settings.googleKey ? '' : ' — add a Google API key in Layers to load ratings'}.</div>`;
+    : `<div class="small" style="margin:6px 0">No rating yet${googleKey() ? '' : ' — add a Google API key in Layers to load ratings'}.</div>`;
   openSheet(`<h2>${v.icon} ${escapeHtml(v.name)}</h2>
     <div class="sub">${escapeHtml(v.kind)}${cuisine ? ' · ' + escapeHtml(cuisine) : ''}${v.openNow != null ? (v.openNow ? ' · <b style="color:#5be38a">Open now</b>' : ' · <b style="color:#ff8a8a">Closed now</b>') : ''}</div>
     ${ratingHtml}
@@ -788,7 +792,7 @@ function applyRatings() {
 }
 
 async function loadRatings(force = false) {
-  const key = settings.googleKey;
+  const key = googleKey();
   if (!key) return;
   try {
     const cache = await caches.open(RATINGS_CACHE);
@@ -1168,10 +1172,10 @@ $('btnLayers').addEventListener('click', () => {
       <span style="display:inline-block;width:10px;height:10px;border-radius:50%;border:2px solid ${g.color}"></span>${g.label}</label></div>`).join('')}
     <div class="row"><span>Minimum rating</span><input type="range" id="minRating" min="0" max="4.8" step="0.1" value="${settings.minRating}"><b id="minRatingV">${settings.minRating ? settings.minRating.toFixed(1) + '★' : 'any'}</b></div>
     <div class="row"><button class="pill" id="refreshOsm">Refresh trail &amp; venue data</button></div>
-    <h2 style="margin-top:14px">Ratings (optional)</h2>
-    <div class="small">OpenStreetMap has no ratings. To show Google ratings, paste a Google Maps Platform API key with
-      <b>Places API (New)</b> enabled. The key is stored only on this device. Results are cached for a week.</div>
-    <div class="row"><input type="search" id="gkey" placeholder="Google API key" value="${escapeHtml(settings.googleKey)}" autocomplete="off" spellcheck="false"></div>
+    <h2 style="margin-top:14px">Ratings</h2>
+    <div class="small">${BUILT_IN_KEY ? 'Google ratings are built in. Paste a different Google API key below to override it; results are cached for a week.'
+      : 'OpenStreetMap has no ratings. To show Google ratings, paste a Google Maps Platform API key with <b>Places API (New)</b> enabled. The key is stored only on this device. Results are cached for a week.'}</div>
+    <div class="row"><input type="search" id="gkey" placeholder="${BUILT_IN_KEY ? 'Override Google API key (optional)' : 'Google API key'}" value="${escapeHtml(settings.googleKey)}" autocomplete="off" spellcheck="false"></div>
     <div class="row"><button class="pill" id="saveKey">Save &amp; load ratings</button>${settings.googleKey ? '<button class="pill" id="clearKey">Remove key</button>' : ''}</div>
     <div class="small">Terrain: SRTM via AWS Terrain Tiles. Imagery: Esri World Imagery. Trails: © OpenStreetMap contributors (ODbL).
     Contours every 10 m, bold every 50 m.</div>`);
@@ -1192,7 +1196,7 @@ $('btnLayers').addEventListener('click', () => {
   $('minRating').addEventListener('input', (e) => {
     settings.minRating = +e.target.value;
     $('minRatingV').textContent = settings.minRating ? settings.minRating.toFixed(1) + '★' : 'any';
-    if (settings.minRating && !settings.googleKey) toast('Ratings need a Google API key (see below). Unrated places are hidden.');
+    if (settings.minRating && !googleKey()) toast('Ratings need a Google API key (see below). Unrated places are hidden.');
     saveSettings(); applyVisibility();
   });
   $('saveKey').addEventListener('click', () => {
@@ -1205,6 +1209,7 @@ $('btnLayers').addEventListener('click', () => {
     venues = venues.filter((v) => v.source !== 'google');
     for (const v of venues) for (const k of ['rating', 'ratingCount', 'gUri', 'price', 'openNow']) delete v[k];
     buildVenueMarkers(); applyVisibility(); $('btnLayers').click();
+    if (BUILT_IN_KEY) loadRatings(true);
   });
 });
 
@@ -1235,7 +1240,7 @@ function showFoodList() {
   openSheet(`${listTabs('food')}<div class="row"><div class="seg" id="grp"><button data-v="all" class="on">All</button>
     ${Object.entries(VENUE_GROUPS).map(([k, g]) => `<button data-v="${k}">${g.label}</button>`).join('')}</div></div>
     <input type="search" id="q" placeholder="Search name or cuisine…"><ul class="list" id="tl"></ul>
-    ${settings.googleKey ? '' : '<div class="small" style="margin-top:6px">Tip: add a Google API key in Layers to see ratings.</div>'}`);
+    ${googleKey() ? '' : '<div class="small" style="margin-top:6px">Tip: add a Google API key in Layers to see ratings.</div>'}`);
   bindListTabs();
   $('tl').innerHTML = render();
   $('q').addEventListener('input', () => { $('tl').innerHTML = render(); });

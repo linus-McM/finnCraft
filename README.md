@@ -61,9 +61,13 @@ OpenStreetMap lists the restaurants, bars and cafés but has **no ratings**. Rat
 2. Enable **Places API (New)**.
 3. Create an API key under **APIs & Services → Credentials**. Restrict it to **Places API (New)**, and set
    **Website restrictions** to your site (for example `https://<user>.github.io/*`) so nobody else can use it.
-4. In the app, open **Layers → Ratings**, paste the key and tap **Save & load ratings**.
+4. Add it to the repository as a secret: **Settings → Secrets and variables → Actions → New repository secret**,
+   name `GOOGLE_PLACES_KEY`. The deploy workflow writes it into `config.js` on the published site, so ratings load
+   for everyone automatically. The key is never committed to git.
 
-The key is stored only in your browser. One refresh makes up to 18 Text Search requests, and the results are cached for 7 days.
+   Alternatively, any user can paste a key in the app under **Layers → Ratings** (stored only in their browser; it overrides the built-in one).
+
+A key on a public web page is visible to anyone who looks, which is why step 3's restrictions matter: they make the key useless anywhere but your site. One refresh makes up to 18 Text Search requests, and the results are cached for 7 days.
 Google ratings are matched to OpenStreetMap venues by name and location. Places that only Google knows about are added as extra markers.
 
 ## Project layout

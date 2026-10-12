@@ -24,6 +24,13 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - name: Inject Google Places key
+        env:
+          KEY: ${{ secrets.GOOGLE_PLACES_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then echo "GOOGLE_PLACES_KEY secret not set; ratings stay optional"; exit 0; fi
+          node -e "const fs=require('fs');fs.writeFileSync('config.js','window.ITACARE_CONFIG = '+JSON.stringify({googleKey:process.env.KEY})+';\n')"
+          echo "Google key injected"
       - uses: actions/configure-pages@v5
         with:
           enablement: true   # switch Pages on for the repo if it isn't yet
