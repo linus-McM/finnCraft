@@ -44,7 +44,7 @@
     display: flex; flex-direction: column; align-items: center; }
   .venue .ic { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font-size: 15px;
     background: #fff; border: 2px solid var(--c); box-shadow: 0 1px 4px rgba(0,0,0,.5); }
-  .venue .rt { margin-top: 2px; font-size: 10px; font-weight: 700; color: #1b1300; background: #ffd34d; border-radius: 6px;
+  .venue .rt { margin-top: 2px; font-size: 10px; font-weight: 700; color: #1b1300; background: var(--rc, #ffd34d); border-radius: 6px;
     padding: 0 4px; box-shadow: 0 1px 2px rgba(0,0,0,.4); }
   .venue .nm { font-size: 10px; font-weight: 600; color: #fff; text-shadow: 0 1px 2px #000, 0 0 2px #000; white-space: nowrap; }
   .venue.sel .ic { transform: scale(1.3); border-color: #00e5ff; }
@@ -93,6 +93,8 @@
   .list li .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .list li .km { color: var(--muted); font-size: 12px; }
   .list li .pill.go { padding: 4px 8px; flex: none; }
+  .rbadge { display: inline-block; min-width: 30px; text-align: center; padding: 1px 6px; border-radius: 6px; font-weight: 700;
+    font-size: 12px; color: #1b1300; background: var(--rc, #ffd34d); }
   .small { color: var(--muted); font-size: 11px; }
   input[type=range] { flex: 1; accent-color: var(--accent); }
   input[type=search] { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
@@ -879,7 +881,7 @@ function buildVenueMarkers() {
     const el = document.createElement('div');
     el.className = 'venue';
     el.style.setProperty('--c', VENUE_GROUPS[v.group].color);
-    el.innerHTML = `<span class="ic">${v.icon}</span>${v.rating != null ? `<span class="rt">${v.rating.toFixed(1)}★</span>` : ''}<span class="nm"></span>`;
+    el.innerHTML = `<span class="ic">${v.icon}</span>${v.rating != null ? `<span class="rt" style="--rc:${reviewColor(v.ratingCount)}">${v.rating.toFixed(1)}</span>` : ''}<span class="nm"></span>`;
     el.querySelector('.nm').textContent = v.name;
     el.addEventListener('click', (e) => { e.stopPropagation(); selectVenue(v); });
     root.appendChild(el);
@@ -914,6 +916,11 @@ function updateVenues() {
 }
 
 const stars = (r) => '★'.repeat(Math.round(r)) + '☆'.repeat(5 - Math.round(r));
+// Review-count confidence colour: lots of reviews = green, some = amber, few = red.
+const reviewColor = (n) => (n ?? 0) >= 250 ? '#3ddc84' : (n ?? 0) >= 100 ? '#ffb547' : '#ff5a5f';
+const ratingBadge = (v) => `<span class="rbadge" style="--rc:${reviewColor(v.ratingCount)}" title="${v.ratingCount ?? 0} Google reviews">${v.rating.toFixed(1)}</span>`;
+// Google's own listing (business profile with reviews, photos, hours) in a new tab.
+const googleListingUrl = (v) => `https://www.google.com/search?q=${encodeURIComponent(v.name + ' Itacaré Bahia')}`;
 
 function selectVenue(v) {
   selectedVenue = v;
@@ -925,7 +932,7 @@ function selectVenue(v) {
   const insta = t['contact:instagram'];
   const mapsUrl = v.gUri || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(v.name + ' Itacaré')}`;
   const ratingHtml = v.rating != null
-    ? `<div class="row"><span class="stars">${stars(v.rating)}</span><b>${v.rating.toFixed(1)}</b><span class="small">${v.ratingCount ?? 0} Google reviews${v.price ? ' · ' + v.price : ''}</span></div>`
+    ? `<div class="row">${ratingBadge(v)}<span class="stars">${stars(v.rating)}</span><span class="small" style="color:${reviewColor(v.ratingCount)}">${v.ratingCount ?? 0} Google reviews</span>${v.price ? `<span class="small">· ${v.price}</span>` : ''}</div>`
     : `<div class="small" style="margin:6px 0">No rating yet${googleKey() ? '' : ' — add a Google API key in Layers to load ratings'}.</div>`;
   openSheet(`<h2>${v.icon} ${escapeHtml(v.name)}</h2>
     <div class="sub">${escapeHtml(v.kind)}${cuisine ? ' · ' + escapeHtml(cuisine) : ''}${v.openNow != null ? (v.openNow ? ' · <b style="color:#5be38a">Open now</b>' : ' · <b style="color:#ff8a8a">Closed now</b>') : ''}</div>
@@ -939,6 +946,7 @@ function selectVenue(v) {
     ${routeButtons(v)}
     <div class="row">
       <a class="pill" target="_blank" rel="noopener" href="${escapeHtml(mapsUrl)}">Google Maps ↗</a>
+      <a class="pill" target="_blank" rel="noopener" href="${escapeHtml(googleListingUrl(v))}">Google listing ↗</a>
       ${phone ? `<a class="pill" href="tel:${escapeHtml(phone.replace(/\s/g, ''))}">Call</a>` : ''}
       ${website ? `<a class="pill" target="_blank" rel="noopener" href="${escapeHtml(website)}">Website ↗</a>` : ''}
       ${insta ? `<a class="pill" target="_blank" rel="noopener" href="${escapeHtml(insta.startsWith('http') ? insta : 'https://instagram.com/' + insta.replace('@', ''))}">Instagram ↗</a>` : ''}
@@ -1735,6 +1743,8 @@ $('btnLayers').addEventListener('click', () => {
     <div class="row"><label><input type="checkbox" data-k="labels" ${settings.show.labels ? 'checked' : ''}>Beach &amp; place names</label></div>
     ${Object.entries(VENUE_GROUPS).map(([k, g]) => `<div class="row"><label><input type="checkbox" data-k="${k}" ${settings.show[k] ? 'checked' : ''}>
       <span style="display:inline-block;width:10px;height:10px;border-radius:50%;border:2px solid ${g.color}"></span>${g.label}</label></div>`).join('')}
+    <div class="small">Rating colour = number of Google reviews: <span class="rbadge" style="--rc:#3ddc84">250+</span>
+      <span class="rbadge" style="--rc:#ffb547">100+</span> <span class="rbadge" style="--rc:#ff5a5f">&lt;100</span></div>
     <div class="row"><span>Minimum rating</span><input type="range" id="minRating" min="0" max="4.8" step="0.1" value="${settings.minRating}"><b id="minRatingV">${settings.minRating ? settings.minRating.toFixed(1) + '★' : 'any'}</b></div>
     <div class="row"><button class="pill" id="refreshOsm">Refresh trail &amp; venue data</button></div>
     <h2 style="margin-top:14px">Ratings</h2>
@@ -1846,7 +1856,7 @@ function showFoodList() {
     return items.filter((v) => (group === 'all' || v.group === group) && (!q || v.name.toLowerCase().includes(q)
       || (v.tags?.cuisine || '').toLowerCase().includes(q))).slice(0, 300).map((v) =>
       `<li data-i="${items.indexOf(v)}"><span>${v.icon}</span><span class="nm">${escapeHtml(v.name)}</span>`
-      + `<span class="km">${v.rating != null ? `<b style="color:#ffd34d">${v.rating.toFixed(1)}★</b> ` : ''}${gps.fix ? fmtKm(haversine(gps.fix, v)) : ''}</span><button class="pill go" data-go="${items.indexOf(v)}" title="Route here">🧭</button></li>`).join('');
+      + `<span class="km">${v.rating != null ? ratingBadge(v) + ' ' : ''}${gps.fix ? fmtKm(haversine(gps.fix, v)) : ''}</span><button class="pill go" data-go="${items.indexOf(v)}" title="Route here">🧭</button></li>`).join('');
   };
   openSheet(`${listTabs('food')}<div class="row"><div class="seg" id="grp"><button data-v="all" class="on">All</button>
     ${Object.entries(VENUE_GROUPS).map(([k, g]) => `<button data-v="${k}">${g.label}</button>`).join('')}</div></div>
