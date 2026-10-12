@@ -16,7 +16,12 @@ Built with plain HTML + JavaScript and [three.js](https://threejs.org). No build
 - **Restaurants, bars and cafés** as markers (from OpenStreetMap), with Google **ratings** if you add an API key (see below).
   Tap a marker to see its rating, cuisine, opening hours, phone, website, distance and directions.
   You can filter by type or by minimum rating.
-- **List view** with search: trails, plus a "Food & drink" tab sorted by rating.
+- **Places**: beaches, viewpoints, waterfalls, sights and towns as tappable labels, with a list sorted by distance from you.
+- **Route here**: from any place, restaurant, trail or tapped map point, computes the shortest walking route from your
+  live GPS position along the real trail and road network, draws it on the 3D map, and shows remaining distance,
+  estimated time, climb and compass direction. It re-routes if you leave the path and tells you when you arrive.
+  If the data has no connected path, a dashed straight line is drawn instead.
+- **List view** with search: Places, Food & drink (sorted by rating) and Trails tabs.
 - **Live GPS**: a blue dot with an accuracy circle and a heading arrow. "Follow me" mode keeps the map centred on you.
   The status bar shows your elevation and the nearest trail.
 - **Track recording**: record your walk, see it in 3D (red line), and export it as GPX.
@@ -91,6 +96,8 @@ tools/bake_terrain.py Script that regenerates data/terrain.* from AWS Terrain Ti
 3. Trails come from the [Overpass API](https://overpass-api.de) (OpenStreetMap). Each trail gets extra points
    about every 12 m, and each point is lifted a little above the ground so the line follows the terrain.
 4. `navigator.geolocation.watchPosition` provides the GPS fixes. These are converted with the same `toLocal()` and drawn as the blue marker.
+5. Routing is done in the browser: every trail and road becomes edges of a graph (`buildGraph()`), the user's position and the
+   destination are snapped to the nearest edge, and Dijkstra's algorithm (`findRoute()`) finds the shortest path. No server involved.
 
 ### Changing the map area
 

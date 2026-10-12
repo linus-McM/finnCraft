@@ -2,7 +2,7 @@
 // - App shell + terrain data are pre-cached on install.
 // - Satellite tiles are cached the first time they are fetched (cache-first).
 // - Trail data is cached by the page itself (Cache API, see index.html).
-const VERSION = 'v3';
+const VERSION = 'v4';
 const SHELL = `itacare-shell-${VERSION}`;
 const TILES = 'itacare-tiles-v1';
 

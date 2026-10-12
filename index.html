@@ -92,6 +92,7 @@
   .list li .sw { width: 14px; height: 4px; border-radius: 2px; flex: none; }
   .list li .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .list li .km { color: var(--muted); font-size: 12px; }
+  .list li .pill.go { padding: 4px 8px; flex: none; }
   .small { color: var(--muted); font-size: 11px; }
   input[type=range] { flex: 1; accent-color: var(--accent); }
   input[type=search] { width: 100%; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line);
@@ -100,9 +101,16 @@
   .pill { text-decoration: none; display: inline-block; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--line); background: rgba(255,255,255,.06);
     color: var(--text); cursor: pointer; font: inherit; }
 
+  #nav { position: fixed; left: 10px; right: 10px; top: calc(env(safe-area-inset-top) + 70px); display: none; align-items: center;
+    gap: 8px; padding: 8px 10px 8px 12px; border-color: rgba(0,255,136,.5); z-index: 4; }
+  #nav .txt { flex: 1; min-width: 0; font-size: 13px; }
+  #nav button { width: 30px; height: 30px; border-radius: 50%; border: none; background: rgba(255,255,255,.1); color: var(--text);
+    cursor: pointer; flex: none; font-size: 14px; }
+  .pill.go { background: #00ff88; color: #00351c; font-weight: 700; border-color: #00ff88; }
+  .label { pointer-events: auto; cursor: pointer; }
   #attrib { position: fixed; left: 8px; bottom: calc(env(safe-area-inset-bottom) + 2px); font-size: 9px; color: rgba(255,255,255,.75);
     text-shadow: 0 0 2px #000; pointer-events: none; }
-  #toast { left: 50%; top: calc(env(safe-area-inset-top) + 70px); transform: translateX(-50%); padding: 8px 14px;
+  #toast { left: 50%; top: calc(env(safe-area-inset-top) + 124px); transform: translateX(-50%); padding: 8px 14px;
     max-width: calc(100% - 40px); text-align: center; display: none; z-index: 5; }
   #toast.show { display: block; }
 
@@ -146,6 +154,7 @@
 </div>
 
 <div id="sheet" class="panel"><button class="close" id="sheetClose">×</button><div id="sheetBody"></div></div>
+<div id="nav" class="panel"><span class="txt"></span><button id="navFit" title="Show whole route">⤢</button><button id="navStop" title="Stop">✕</button></div>
 <div id="toast" class="panel"></div>
 <div id="attrib">Imagery © Esri · Trails © OpenStreetMap contributors · Terrain SRTM</div>
 
@@ -448,6 +457,8 @@ out geom;
   nwr["natural"~"^(peak|bay|cape)$"]["name"](${b});
   nwr["waterway"="waterfall"](${b});
   node["tourism"="viewpoint"](${b});
+  nwr["tourism"~"^(attraction|museum|artwork|picnic_site)$"]["name"](${b});
+  nwr["sport"="surfing"]["name"](${b});
   nwr["amenity"~"^(restaurant|fast_food|bar|pub|biergarten|cafe|ice_cream)$"](${b});
 );
 out center;`;
@@ -468,7 +479,7 @@ async function fetchOSM() {
 }
 
 // Trail data is cached with the Cache API (it can be several MB — too big for localStorage).
-const OSM_CACHE = 'itacare-osm-v2', OSM_KEY = 'osm-data.json';
+const OSM_CACHE = 'itacare-osm-v3', OSM_KEY = 'osm-data.json';
 async function cachedOSM() {
   try { const r = await (await caches.open(OSM_CACHE)).match(OSM_KEY); return r ? await r.json() : null; } catch { return null; }
 }
@@ -520,15 +531,18 @@ function buildTrails(osm) {
       const a = AMENITY[el.tags.amenity];
       venues.push({ id: `${el.type[0]}${el.id}`, name: el.tags.name || VENUE_GROUPS[a.group].unnamed, group: a.group, icon: a.icon,
         kind: a.label, lat, lon, tags: el.tags });
-    } else if (el.tags?.name || el.tags?.waterway === 'waterfall' || el.tags?.tourism === 'viewpoint') {
+    } else if (el.tags && placeKind(el.tags)) {
       const lat = el.lat ?? el.center?.lat, lon = el.lon ?? el.center?.lon;
       if (lat == null || !inBounds(lat, lon)) continue;
-      const t = el.tags;
-      const kind = t.natural === 'beach' ? 'beach' : t.place ? 'place' : 'poi';
-      const name = t.name || (t.waterway === 'waterfall' ? 'Waterfall' : 'Viewpoint');
-      pois.push({ name, kind, lat, lon, rank: t.place === 'town' ? 0 : kind === 'beach' ? 1 : t.place === 'village' ? 1 : 2 });
+      const t = el.tags, kind = placeKind(t);
+      const name = t.name || PLACE_KINDS[kind].label;
+      pois.push({ id: `${el.type[0]}${el.id}`, name, kind, group: PLACE_KINDS[kind].group, lat, lon,
+        rank: kind === 'town' ? 0 : kind === 'beach' || kind === 'village' ? 1 : 2 });
     }
   }
+  // Beaches are often mapped several times (polygon + node); keep one per name and kind.
+  const seen = new Set();
+  pois = pois.filter((p) => { const k = p.kind + '|' + p.name; if (seen.has(k)) return false; seen.add(k); return true; });
   for (const t of trails) {
     t.pts = densify(t.latlon);
     t.length = 0;
@@ -551,9 +565,11 @@ function buildTrails(osm) {
     world.add(line);
     trailLayers[cat] = line;
   }
+  buildGraph();
   buildLabels();
   applyRatings();
   applyVisibility();
+  if (nav.dest && gps.fix) computeRoute(false);
 }
 
 function applyVisibility() {
@@ -568,14 +584,11 @@ function applyVisibility() {
 let labelEls = [];
 function buildLabels() {
   const root = $('labels'); root.innerHTML = ''; labelEls = [];
-  // De-duplicate by name (beaches are often mapped as several polygons).
-  const seen = new Set();
   pois.sort((a, b) => a.rank - b.rank);
   for (const p of pois) {
-    const key = p.kind + p.name;
-    if (seen.has(key)) continue; seen.add(key);
     const el = document.createElement('div');
-    el.className = 'label ' + p.kind; el.textContent = p.name;
+    el.className = 'label ' + (p.kind === 'beach' ? 'beach' : p.group === 'town' ? 'place' : 'poi'); el.textContent = p.name;
+    el.addEventListener('click', (e) => { e.stopPropagation(); selectPlace(p); });
     root.appendChild(el);
     const l = toLocal(p.lat, p.lon);
     labelEls.push({ el, p, pos: new THREE.Vector3(l.x, heightAt(l.x, l.z), l.z), rank: p.rank });
@@ -694,14 +707,15 @@ function selectVenue(v) {
       <div class="stat"><b>${Math.round(Math.max(heightAt(l.x, l.z), 0))} m</b><span>elevation</span></div>
     </div>
     ${t.opening_hours ? `<div class="small">Hours: ${escapeHtml(t.opening_hours)}</div>` : ''}
+    ${routeButtons(v)}
     <div class="row">
-      <a class="pill" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${v.lat},${v.lon}&travelmode=walking">Directions ↗</a>
       <a class="pill" target="_blank" rel="noopener" href="${escapeHtml(mapsUrl)}">Google Maps ↗</a>
       ${phone ? `<a class="pill" href="tel:${escapeHtml(phone.replace(/\s/g, ''))}">Call</a>` : ''}
       ${website ? `<a class="pill" target="_blank" rel="noopener" href="${escapeHtml(website)}">Website ↗</a>` : ''}
       ${insta ? `<a class="pill" target="_blank" rel="noopener" href="${escapeHtml(insta.startsWith('http') ? insta : 'https://instagram.com/' + insta.replace('@', ''))}">Instagram ↗</a>` : ''}
     </div>
     <div class="small">${v.source === 'google' ? 'Listing from Google Places.' : 'Listing © OpenStreetMap contributors.'}${v.rating != null ? ' Rating from Google.' : ''}</div>`);
+  bindRouteButtons(v);
   flyTo(l.x, l.z, Math.min(camera.position.distanceTo(controls.target), 900));
 }
 
@@ -813,6 +827,313 @@ async function loadRatings(force = false) {
 }
 
 // ---------------------------------------------------------------------------
+// Places (beaches, viewpoints, waterfalls, sights, towns) — selectable like venues
+// ---------------------------------------------------------------------------
+const PLACE_KINDS = {
+  beach:     { icon: '🏖️', label: 'Beach', group: 'beach' },
+  town:      { icon: '🏘️', label: 'Town', group: 'town' },
+  village:   { icon: '🏘️', label: 'Village', group: 'town' },
+  hamlet:    { icon: '🏡', label: 'Hamlet', group: 'town' },
+  suburb:    { icon: '🏘️', label: 'Neighbourhood', group: 'town' },
+  waterfall: { icon: '💦', label: 'Waterfall', group: 'sight' },
+  viewpoint: { icon: '🔭', label: 'Viewpoint', group: 'sight' },
+  peak:      { icon: '⛰️', label: 'Peak', group: 'sight' },
+  cape:      { icon: '🌊', label: 'Cape', group: 'sight' },
+  bay:       { icon: '🌊', label: 'Bay', group: 'sight' },
+  attraction:{ icon: '📍', label: 'Attraction', group: 'sight' },
+  museum:    { icon: '🏛️', label: 'Museum', group: 'sight' },
+  artwork:   { icon: '🎨', label: 'Artwork', group: 'sight' },
+  picnic:    { icon: '🧺', label: 'Picnic site', group: 'sight' },
+  surf:      { icon: '🏄', label: 'Surf spot', group: 'beach' },
+};
+const PLACE_GROUPS = { beach: 'Beaches', sight: 'Sights', town: 'Towns' };
+
+function placeKind(t) {
+  if (t.natural === 'beach') return 'beach';
+  if (t.place && PLACE_KINDS[t.place]) return t.place;
+  if (t.place === 'neighbourhood') return 'suburb';
+  if (t.waterway === 'waterfall') return 'waterfall';
+  if (t.tourism === 'viewpoint') return 'viewpoint';
+  if (t.natural && PLACE_KINDS[t.natural]) return t.natural;
+  if (t.tourism === 'picnic_site') return 'picnic';
+  if (t.tourism && PLACE_KINDS[t.tourism]) return t.tourism;
+  if (t.sport === 'surfing') return 'surf';
+  return null;
+}
+
+function selectPlace(p) {
+  const l = toLocal(p.lat, p.lon);
+  const k = PLACE_KINDS[p.kind];
+  openSheet(`<h2>${k.icon} ${escapeHtml(p.name)}</h2><div class="sub">${k.label}</div>
+    <div class="stats">
+      ${gps.fix ? `<div class="stat"><b>${fmtKm(haversine(gps.fix, p))}</b><span>from you</span></div>` : ''}
+      <div class="stat"><b>${fmtKm(haversine(TOWN, p))}</b><span>from town</span></div>
+      <div class="stat"><b>${Math.round(Math.max(heightAt(l.x, l.z), 0))} m</b><span>elevation</span></div>
+    </div>
+    ${routeButtons(p)}
+    <div class="small">© OpenStreetMap contributors.</div>`);
+  bindRouteButtons(p);
+  flyTo(l.x, l.z, Math.min(camera.position.distanceTo(controls.target), 1500));
+}
+
+// Shared "Route here" + Google directions buttons for any sheet.
+function routeButtons(dest) {
+  return `<div class="row">
+    <button class="pill go" id="routeHere">🧭 Route here</button>
+    <a class="pill" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${dest.lat},${dest.lon}&travelmode=walking">Google directions ↗</a>
+  </div>`;
+}
+function bindRouteButtons(dest) {
+  $('routeHere')?.addEventListener('click', () => startNavigation(dest));
+}
+
+// ---------------------------------------------------------------------------
+// Routing: shortest walking path over the OSM trail + road network, from the
+// phone's live GPS position to a chosen destination. Pure client-side Dijkstra.
+// ---------------------------------------------------------------------------
+const graph = { nodes: [], adj: [], edges: [] };   // nodes: {lat,lon,x,z}; adj[i]: [[j, cost], ...]
+
+function buildGraph() {
+  graph.nodes = []; graph.adj = []; graph.edges = [];
+  const index = new Map();
+  // OSM ways that join share identical coordinates, so a coordinate key is a node id.
+  const nodeFor = (p) => {
+    const key = p.lat.toFixed(6) + ',' + p.lon.toFixed(6);
+    let i = index.get(key);
+    if (i == null) {
+      i = graph.nodes.length; index.set(key, i);
+      const l = toLocal(p.lat, p.lon);
+      graph.nodes.push({ lat: p.lat, lon: p.lon, x: l.x, z: l.z });
+      graph.adj.push([]);
+    }
+    return i;
+  };
+  for (const t of trails) {
+    // Steps and rough tracks feel longer than their length; slight penalty.
+    const factor = t.cat === 'steps' ? 1.3 : 1;
+    for (let i = 1; i < t.latlon.length; i++) {
+      const a = nodeFor(t.latlon[i - 1]), b = nodeFor(t.latlon[i]);
+      if (a === b) continue;
+      const len = haversine(t.latlon[i - 1], t.latlon[i]);
+      graph.adj[a].push([b, len * factor]); graph.adj[b].push([a, len * factor]);
+      graph.edges.push([a, b, len]);
+    }
+  }
+}
+
+// Closest point on any network edge to a lat/lon (brute force; ~30k edges is fine).
+function snapToNetwork(lat, lon) {
+  const p = toLocal(lat, lon);
+  let best = null;
+  for (const [a, b, len] of graph.edges) {
+    const A = graph.nodes[a], B = graph.nodes[b];
+    const dx = B.x - A.x, dz = B.z - A.z, l2 = dx * dx + dz * dz;
+    let t = l2 ? ((p.x - A.x) * dx + (p.z - A.z) * dz) / l2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const x = A.x + dx * t, z = A.z + dz * t;
+    const d = Math.hypot(p.x - x, p.z - z);
+    if (!best || d < best.d) best = { d, a, b, t, len, x, z };
+  }
+  return best;
+}
+
+// Small binary heap for Dijkstra.
+class MinHeap {
+  constructor() { this.a = []; }
+  push(k, v) { const a = this.a; a.push([k, v]); let i = a.length - 1;
+    while (i > 0) { const p = (i - 1) >> 1; if (a[p][0] <= a[i][0]) break; [a[p], a[i]] = [a[i], a[p]]; i = p; } }
+  pop() { const a = this.a, top = a[0], last = a.pop(); if (a.length) { a[0] = last; let i = 0;
+      for (;;) { const l = 2 * i + 1, r = l + 1; let m = i;
+        if (l < a.length && a[l][0] < a[m][0]) m = l; if (r < a.length && a[r][0] < a[m][0]) m = r;
+        if (m === i) break; [a[m], a[i]] = [a[i], a[m]]; i = m; } }
+    return top; }
+  get size() { return this.a.length; }
+}
+
+// Returns { points:[{lat,lon}], length } along the network, or null if unreachable.
+function findRoute(from, to) {
+  if (!graph.edges.length) return null;
+  const s = snapToNetwork(from.lat, from.lon), e = snapToNetwork(to.lat, to.lon);
+  if (!s || !e) return null;
+  const n = graph.nodes.length;
+  const dist = new Float64Array(n).fill(Infinity), prev = new Int32Array(n).fill(-1);
+  const heap = new MinHeap();
+  // Virtual start: the snapped point reaches both ends of its edge.
+  dist[s.a] = s.len * s.t; dist[s.b] = s.len * (1 - s.t);
+  heap.push(dist[s.a], s.a); heap.push(dist[s.b], s.b);
+  const goalCost = (i) => i === e.a ? e.len * e.t : i === e.b ? e.len * (1 - e.t) : Infinity;
+  let bestEnd = -1, bestTotal = Infinity;
+  // Same edge, start and end between the same two nodes: direct.
+  if (s.a === e.a && s.b === e.b) { bestTotal = Math.abs(s.t - e.t) * s.len; }
+  while (heap.size) {
+    const [d, i] = heap.pop();
+    if (d > dist[i]) continue;
+    if (d >= bestTotal) break;
+    const g = goalCost(i);
+    if (d + g < bestTotal) { bestTotal = d + g; bestEnd = i; }
+    for (const [j, w] of graph.adj[i]) {
+      const nd = d + w;
+      if (nd < dist[j]) { dist[j] = nd; prev[j] = i; heap.push(nd, j); }
+    }
+  }
+  if (!Number.isFinite(bestTotal)) return null;
+  const pts = [];
+  if (bestEnd >= 0) {
+    for (let i = bestEnd; i >= 0; i = prev[i]) {
+      pts.push({ lat: graph.nodes[i].lat, lon: graph.nodes[i].lon });
+      if (i === s.a || i === s.b) break;
+    }
+    pts.reverse();
+  }
+  const sLL = toLatLon(s.x, s.z), eLL = toLatLon(e.x, e.z);
+  pts.unshift({ lat: sLL.lat, lon: sLL.lon });
+  pts.push({ lat: eLL.lat, lon: eLL.lon });
+  let length = 0;
+  for (let i = 1; i < pts.length; i++) length += haversine(pts[i - 1], pts[i]);
+  return { points: pts, length, startGap: s.d, endGap: e.d };
+}
+
+const nav = { dest: null, route: null, line: null, link: null, lastCalc: 0, pending: false };
+
+function startNavigation(dest) {
+  nav.dest = { name: dest.name || 'Destination', lat: dest.lat, lon: dest.lon };
+  closeSheet();
+  if (!gps.fix || !inBounds(gps.fix.lat, gps.fix.lon)) {
+    nav.pending = true;
+    startGps();
+    gps.follow = true; $('btnGps').classList.add('on');
+    showNav('Finding your location…');
+    if (gps.fix) toast('You are outside the map area; the route will appear once you are in range.', 5000);
+    return;
+  }
+  gps.follow = true; $('btnGps').classList.add('on');
+  computeRoute(true);
+}
+
+function computeRoute(fit = false) {
+  if (!nav.dest || !gps.fix) return;
+  nav.lastCalc = performance.now();
+  nav.pending = false;
+  const r = findRoute(gps.fix, nav.dest);
+  if (!r) {
+    // No connected path in the data: show a straight line so the user still has a bearing.
+    nav.route = { points: [{ lat: gps.fix.lat, lon: gps.fix.lon }, { lat: nav.dest.lat, lon: nav.dest.lon }],
+      length: haversine(gps.fix, nav.dest), straight: true, startGap: 0, endGap: 0 };
+  } else nav.route = r;
+  drawRoute();
+  updateNavBanner();
+  if (fit) fitRoute();
+}
+
+function drawRoute() {
+  if (nav.line) { disposeLine(nav.line); nav.line = null; }
+  if (nav.link) { disposeLine(nav.link); nav.link = null; }
+  if (!nav.route) return;
+  const pts = densify(nav.route.points);
+  const arr = []; for (const p of pts) arr.push(p.x, p.y + 1.5, p.z);
+  nav.line = new Line2(new LineGeometry().setPositions(arr),
+    makeLineMaterial(nav.route.straight ? 0xffffff : 0x00ff88, 7, nav.route.straight ? { dashed: true, dashSize: 30, gapSize: 20 } : {}));
+  if (nav.route.straight) nav.line.computeLineDistances();
+  nav.line.renderOrder = 6;
+  world.add(nav.line);
+  // Dotted connectors from the exact position / destination to the nearest point of the network.
+  if (!nav.route.straight && (nav.route.startGap > 8 || nav.route.endGap > 8)) {
+    const seg = [];
+    const push = (a, b) => { const A = toLocal(a.lat, a.lon), B = toLocal(b.lat, b.lon);
+      seg.push(A.x, heightAt(A.x, A.z) + TRAIL_LIFT + 1.5, A.z, B.x, heightAt(B.x, B.z) + TRAIL_LIFT + 1.5, B.z); };
+    if (nav.route.startGap > 8) push(gps.fix, nav.route.points[0]);
+    if (nav.route.endGap > 8) push(nav.route.points[nav.route.points.length - 1], nav.dest);
+    nav.link = new LineSegments2(new LineSegmentsGeometry().setPositions(seg),
+      makeLineMaterial(0xffffff, 3, { dashed: true, dashSize: 8, gapSize: 8 }));
+    nav.link.computeLineDistances();
+    nav.link.renderOrder = 6;
+    world.add(nav.link);
+  }
+}
+
+function fitRoute() {
+  if (!nav.route) return;
+  const a = toLocal(gps.fix.lat, gps.fix.lon), b = toLocal(nav.dest.lat, nav.dest.lon);
+  const d = Math.hypot(a.x - b.x, a.z - b.z);
+  flyTo((a.x + b.x) / 2, (a.z + b.z) / 2, Math.max(500, d * 1.6));
+  gps.follow = false; $('btnGps').classList.remove('on');
+}
+
+// Remaining distance along the route from the user's current position.
+function routeProgress() {
+  const pts = nav.route.points;
+  const p = toLocal(gps.fix.lat, gps.fix.lon);
+  let best = { d: Infinity, i: 0, t: 0 };
+  const loc = pts.map((q) => toLocal(q.lat, q.lon));
+  for (let i = 1; i < loc.length; i++) {
+    const A = loc[i - 1], B = loc[i], dx = B.x - A.x, dz = B.z - A.z, l2 = dx * dx + dz * dz;
+    let t = l2 ? ((p.x - A.x) * dx + (p.z - A.z) * dz) / l2 : 0; t = Math.max(0, Math.min(1, t));
+    const d = Math.hypot(p.x - (A.x + dx * t), p.z - (A.z + dz * t));
+    if (d < best.d) best = { d, i, t };
+  }
+  let remaining = haversine(pts[best.i - 1], pts[best.i]) * (1 - best.t);
+  for (let i = best.i + 1; i < pts.length; i++) remaining += haversine(pts[i - 1], pts[i]);
+  // Ascent still to climb (from the terrain model).
+  let up = 0, last = null;
+  for (let i = best.i; i < pts.length; i++) {
+    const l = toLocal(pts[i].lat, pts[i].lon), h = heightAt(l.x, l.z);
+    if (last != null && h - last >= 3) up += h - last;
+    if (last == null || Math.abs(h - last) >= 3) last = h;
+  }
+  return { offRoute: best.d, remaining, up };
+}
+
+function updateNavBanner() {
+  if (!nav.dest || !nav.route || !gps.fix) return;
+  const pr = routeProgress();
+  const mins = Math.round(pr.remaining / 1000 * 12 + pr.up / 10);
+  const bearing = (() => {
+    const toR = Math.PI / 180, a = gps.fix, b = nav.dest;
+    const y = Math.sin((b.lon - a.lon) * toR) * Math.cos(b.lat * toR);
+    const x = Math.cos(a.lat * toR) * Math.sin(b.lat * toR) - Math.sin(a.lat * toR) * Math.cos(b.lat * toR) * Math.cos((b.lon - a.lon) * toR);
+    const deg = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+    return ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(deg / 45) % 8];
+  })();
+  showNav(`<b>${escapeHtml(nav.dest.name)}</b> · ${fmtKm(pr.remaining)} · ~${mins} min · ↑${Math.round(pr.up)} m · ${bearing}`
+    + (nav.route.straight ? ' · <i>no mapped path, straight line</i>' : pr.offRoute > 40 ? ' · <i>off route</i>' : ''));
+}
+
+function showNav(html) {
+  const el = $('nav');
+  el.querySelector('.txt').innerHTML = html;
+  el.style.display = 'flex';
+}
+
+function stopNavigation() {
+  nav.dest = null; nav.route = null; nav.pending = false; clearTimeout(nav.retry);
+  if (nav.line) { disposeLine(nav.line); nav.line = null; }
+  if (nav.link) { disposeLine(nav.link); nav.link = null; }
+  $('nav').style.display = 'none';
+}
+$('navStop').addEventListener('click', stopNavigation);
+$('navFit').addEventListener('click', () => { if (nav.route && gps.fix) fitRoute(); });
+
+// Called from onPosition on every GPS fix.
+function onNavPosition() {
+  if (!nav.dest) return;
+  if (nav.pending || !nav.route) { computeRoute(true); return; }
+  if (haversine(gps.fix, nav.dest) < 25) {
+    toast(`You have arrived at ${nav.dest.name}.`, 6000);
+    stopNavigation();
+    return;
+  }
+  const pr = routeProgress();
+  // Re-route when the user has clearly left the path (and not more than every 10 s).
+  if (pr.offRoute > 40) {
+    const wait = 10000 - (performance.now() - nav.lastCalc);
+    if (wait <= 0) { computeRoute(false); return; }
+    clearTimeout(nav.retry);
+    nav.retry = setTimeout(() => { if (nav.dest && nav.route && routeProgress().offRoute > 40) computeRoute(false); }, wait);
+  }
+  updateNavBanner();
+}
+
+// ---------------------------------------------------------------------------
 // GPS location
 // ---------------------------------------------------------------------------
 const gps = { watchId: null, fix: null, follow: false, track: store.get('itacare.track', []), recording: false };
@@ -865,7 +1186,8 @@ function onPosition(pos) {
   const l = toLocal(lat, lon);
   setStatus(`${lat.toFixed(5)}, ${lon.toFixed(5)} · ${Math.round(heightAt(l.x, l.z))} m · ±${Math.round(accuracy)} m`
     + (near ? ` · ${fmtKm(near.d)} to ${near.t.name}` : ''));
-  if (first) flyTo(l.x, l.z, 1200);
+  if (first && !nav.dest) flyTo(l.x, l.z, 1200);
+  onNavPosition();
 }
 
 function nearestTrail(lat, lon) {
@@ -1057,8 +1379,9 @@ function onTap(sx, sy) {
   if (h >= 0) html += `<div class="stats"><div class="stat"><b>${Math.round(h)} m</b><span>elevation</span></div>`
     + (gps.fix ? `<div class="stat"><b>${fmtKm(haversine(gps.fix, ll))}</b><span>from you</span></div>` : '')
     + `<div class="stat"><b>${fmtKm(haversine(TOWN, ll))}</b><span>from town</span></div></div>`;
-  html += `<div class="row"><a class="pill" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${ll.lat},${ll.lon}&travelmode=walking">Directions ↗</a></div>`;
+  if (h >= 0) html += routeButtons(ll);
   openSheet(html);
+  bindRouteButtons({ name: 'Map point', lat: ll.lat, lon: ll.lon });
 }
 
 function selectTrail(t) {
@@ -1099,8 +1422,15 @@ function selectTrail(t) {
       <div class="stat"><b>${Math.round(dist / 1000 / 4 * 60 + up / 10)} min</b><span>walk est.</span></div>
     </div>
     <canvas id="profile"></canvas>
-    <div class="small">Elevation profile (from SRTM terrain data). Data © OpenStreetMap contributors.</div>`);
+    <div class="small">Elevation profile (from SRTM terrain data). Data © OpenStreetMap contributors.</div>
+    <div class="row"><button class="pill go" id="routeTrail">🧭 Route to this trail</button></div>`);
   drawProfile($('profile'), prof);
+  $('routeTrail').addEventListener('click', () => {
+    // Head for the point of the trail closest to the user (or its start).
+    let target = group[0].latlon[0];
+    if (gps.fix) { let best = Infinity; for (const g of group) for (const q of g.latlon) { const d = haversine(gps.fix, q); if (d < best) { best = d; target = q; } } }
+    startNavigation({ name: t.name, lat: target.lat, lon: target.lon });
+  });
   const mid = group[0].pts[Math.floor(group[0].pts.length / 2)];
   flyTo(mid.x, mid.z, Math.max(600, Math.min(dist * 1.2, 8000)));
 }
@@ -1213,15 +1543,48 @@ $('btnLayers').addEventListener('click', () => {
   });
 });
 
-let listTab = 'trails';
-$('btnTrails').addEventListener('click', () => (listTab === 'food' ? showFoodList() : showTrailList()));
+let listTab = 'places';
+const showList = { trails: () => showTrailList(), food: () => showFoodList(), places: () => showPlacesList() };
+$('btnTrails').addEventListener('click', () => showList[listTab]());
 const listTabs = (on) => `<div class="row"><div class="seg" id="listTabs">
-  <button data-v="trails" class="${on === 'trails' ? 'on' : ''}">Trails</button>
-  <button data-v="food" class="${on === 'food' ? 'on' : ''}">Food &amp; drink</button></div></div>`;
+  <button data-v="places" class="${on === 'places' ? 'on' : ''}">Places</button>
+  <button data-v="food" class="${on === 'food' ? 'on' : ''}">Food &amp; drink</button>
+  <button data-v="trails" class="${on === 'trails' ? 'on' : ''}">Trails</button></div></div>`;
 function bindListTabs() {
   $('listTabs').addEventListener('click', (e) => {
     const v = e.target.dataset.v; if (!v) return;
-    listTab = v; v === 'food' ? showFoodList() : showTrailList();
+    listTab = v; showList[v]();
+  });
+}
+
+function showPlacesList() {
+  if (!pois.length) { openSheet(listTabs('places') + '<div class="small">No places loaded yet.</div>'); bindListTabs(); return; }
+  let group = 'all';
+  // Nearest first when we know where the user is; otherwise towns, then beaches.
+  const items = pois.slice().sort((a, b) => gps.fix ? haversine(gps.fix, a) - haversine(gps.fix, b)
+    : a.rank - b.rank || a.name.localeCompare(b.name));
+  const render = () => {
+    const q = $('q').value.toLowerCase();
+    return items.filter((p) => (group === 'all' || p.group === group) && (!q || p.name.toLowerCase().includes(q))).slice(0, 300).map((p) =>
+      `<li data-i="${items.indexOf(p)}"><span>${PLACE_KINDS[p.kind].icon}</span><span class="nm">${escapeHtml(p.name)}<br><span class="small">${PLACE_KINDS[p.kind].label}</span></span>`
+      + `<span class="km">${gps.fix ? fmtKm(haversine(gps.fix, p)) : ''}</span><button class="pill go" data-go="${items.indexOf(p)}" title="Route here">🧭</button></li>`).join('');
+  };
+  openSheet(`${listTabs('places')}<div class="row"><div class="seg" id="grp"><button data-v="all" class="on">All</button>
+    ${Object.entries(PLACE_GROUPS).map(([k, g]) => `<button data-v="${k}">${g}</button>`).join('')}</div></div>
+    <input type="search" id="q" placeholder="Search beaches, sights, towns…"><ul class="list" id="tl"></ul>
+    ${gps.fix ? '' : '<div class="small" style="margin-top:6px">Turn on location (bottom-right button) to sort by distance and route from where you are.</div>'}`);
+  bindListTabs();
+  $('tl').innerHTML = render();
+  $('q').addEventListener('input', () => { $('tl').innerHTML = render(); });
+  $('grp').addEventListener('click', (e) => {
+    const v = e.target.dataset.v; if (!v) return; group = v;
+    for (const b of $('grp').children) b.classList.toggle('on', b.dataset.v === v);
+    $('tl').innerHTML = render();
+  });
+  $('tl').addEventListener('click', (e) => {
+    const go = e.target.closest('[data-go]');
+    if (go) { startNavigation(items[+go.dataset.go]); return; }
+    const li = e.target.closest('li'); if (li) selectPlace(items[+li.dataset.i]);
   });
 }
 
@@ -1235,7 +1598,7 @@ function showFoodList() {
     return items.filter((v) => (group === 'all' || v.group === group) && (!q || v.name.toLowerCase().includes(q)
       || (v.tags?.cuisine || '').toLowerCase().includes(q))).slice(0, 300).map((v) =>
       `<li data-i="${items.indexOf(v)}"><span>${v.icon}</span><span class="nm">${escapeHtml(v.name)}</span>`
-      + `<span class="km">${v.rating != null ? `<b style="color:#ffd34d">${v.rating.toFixed(1)}★</b> ` : ''}${gps.fix ? fmtKm(haversine(gps.fix, v)) : ''}</span></li>`).join('');
+      + `<span class="km">${v.rating != null ? `<b style="color:#ffd34d">${v.rating.toFixed(1)}★</b> ` : ''}${gps.fix ? fmtKm(haversine(gps.fix, v)) : ''}</span><button class="pill go" data-go="${items.indexOf(v)}" title="Route here">🧭</button></li>`).join('');
   };
   openSheet(`${listTabs('food')}<div class="row"><div class="seg" id="grp"><button data-v="all" class="on">All</button>
     ${Object.entries(VENUE_GROUPS).map(([k, g]) => `<button data-v="${k}">${g.label}</button>`).join('')}</div></div>
@@ -1249,7 +1612,11 @@ function showFoodList() {
     for (const b of $('grp').children) b.classList.toggle('on', b.dataset.v === v);
     $('tl').innerHTML = render();
   });
-  $('tl').addEventListener('click', (e) => { const li = e.target.closest('li'); if (li) selectVenue(items[+li.dataset.i]); });
+  $('tl').addEventListener('click', (e) => {
+    const go = e.target.closest('[data-go]');
+    if (go) { startNavigation(items[+go.dataset.go]); return; }
+    const li = e.target.closest('li'); if (li) selectVenue(items[+li.dataset.i]);
+  });
 }
 
 function showTrailList() {
