@@ -8,8 +8,11 @@ Built with plain HTML + JavaScript and [three.js](https://threejs.org). No build
 ## Features
 
 - **3D terrain** from SRTM elevation data covering Itacaré town south to Itacarezinho (about 13 × 18 km).
-- **Two map styles**: satellite imagery (Esri World Imagery), or a topo style with hillshading and contour lines
-  every 10 m (bold every 50 m).
+- **Two map styles**: satellite imagery, or a topo style with hillshading and contour lines every 10 m (bold every 50 m).
+- **Sharp imagery where you look**: the terrain is split into 1 km chunks; chunks near the camera stream in imagery at
+  about 0.6 m per pixel (zoom 18), enough to see individual houses, while the rest shows a coarse overview. Imagery comes from
+  Esri World Imagery (free) or, with a Google key that has **Map Tiles API** enabled, Google satellite tiles (choose in Layers).
+- **3D buildings** extruded from OpenStreetMap footprints (height from OSM tags where present).
 - **Trails** loaded from OpenStreetMap, colour-coded by type: hiking routes, paths, dirt tracks, steps and roads.
 - **Tap a trail** to see its length, ascent and descent, lowest and highest points, a walking-time estimate and an elevation profile.
 - **Tap the ground** to see its elevation, its distance from you, and a link for walking directions.

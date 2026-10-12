@@ -169,6 +169,7 @@ import { LineSegmentsGeometry } from './vendor/LineSegmentsGeometry.js';
 import { LineMaterial } from './vendor/LineMaterial.js';
 import { Line2 } from './vendor/Line2.js';
 import { LineGeometry } from './vendor/LineGeometry.js';
+import { mergeGeometries } from './vendor/BufferGeometryUtils.js';
 
 // ---------------------------------------------------------------------------
 // Settings & small helpers
@@ -180,7 +181,6 @@ const OVERPASS = [
   'https://overpass.kumi.systems/api/interpreter',
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 ];
-const IMAGERY = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
 
 const CATEGORIES = {
   route:  { label: 'Hiking routes', color: 0xff4fd8, width: 5 },
@@ -197,9 +197,9 @@ const store = {
 };
 const savedSettings = store.get('itacare.settings', {});
 const BUILT_IN_KEY = (window.ITACARE_CONFIG && window.ITACARE_CONFIG.googleKey) || '';
-const settings = Object.assign({ layer: 'satellite', exaggeration: 1.5, minRating: 0, googleKey: '' }, savedSettings, {
+const settings = Object.assign({ layer: 'satellite', imagery: 'esri', hires: true, exaggeration: 1.5, minRating: 0, googleKey: '' }, savedSettings, {
   show: Object.assign({ route: true, path: true, track: true, steps: true, road: true, labels: true,
-    restaurant: true, bar: true, cafe: true }, savedSettings.show),
+    restaurant: true, bar: true, cafe: true, buildings: true }, savedSettings.show),
 });
 const saveSettings = () => store.set('itacare.settings', settings);
 // The key pasted in Layers wins; otherwise the one baked in at deploy time.
@@ -289,7 +289,7 @@ scene.add(sun);
 const world = new THREE.Group();
 scene.add(world);
 
-let terrainMesh, waterMesh, satTexture, topoTexture;
+let waterMesh, topoTexture, baseTexture;   // baseTexture: whole-area satellite (coarse)
 const lineMaterials = [];
 
 window.addEventListener('resize', () => {
@@ -312,8 +312,13 @@ function makeLineMaterial(color, width, opts = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Terrain
+// Terrain: the heightmap is split into ~1 km chunks. Every chunk shows the
+// coarse whole-area imagery until a sharp tile mosaic for that chunk has been
+// streamed in (only for chunks near the camera, see updateDetail()).
 // ---------------------------------------------------------------------------
+const CHUNK_VERTS = 40;           // vertices per chunk edge (~1 km at 26 m spacing)
+const chunks = [];                // { mesh, i, j, x0, x1, z0, z1, u0, u1, v0, v1, detail:{key,tex} }
+
 async function loadTerrain() {
   T = await (await fetch('data/terrain.json')).json();
   MX0 = mercX(T.west); MX1 = mercX(T.east); MY0 = mercY(T.north); MY1 = mercY(T.south);
@@ -321,21 +326,66 @@ async function loadTerrain() {
   heights = new Float32Array(raw.length);
   for (let i = 0; i < raw.length; i++) heights[i] = raw[i] / 10;
 
-  const geo = new THREE.PlaneGeometry(T.sizeX, T.sizeZ, T.width - 1, T.height - 1);
-  geo.rotateX(-Math.PI / 2);
-  const pos = geo.attributes.position;
-  for (let i = 0; i < pos.count; i++) pos.setY(i, heights[i]);
-  geo.computeVertexNormals();
-
   topoTexture = makeTopoTexture();
-  terrainMesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: topoTexture, roughness: 1, metalness: 0 }));
-  world.add(terrainMesh);
+  const W = T.width, H = T.height;
+  const cellX = T.sizeX / (W - 1), cellZ = T.sizeZ / (H - 1);
+  for (let r0 = 0; r0 < H - 1; r0 += CHUNK_VERTS - 1) {
+    for (let c0 = 0; c0 < W - 1; c0 += CHUNK_VERTS - 1) {
+      const c1 = Math.min(c0 + CHUNK_VERTS - 1, W - 1), r1 = Math.min(r0 + CHUNK_VERTS - 1, H - 1);
+      const nc = c1 - c0 + 1, nr = r1 - r0 + 1;
+      const pos = new Float32Array(nc * nr * 3), uv = new Float32Array(nc * nr * 2);
+      let k = 0;
+      for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+        pos[k * 3] = c * cellX - T.sizeX / 2; pos[k * 3 + 1] = heights[r * W + c]; pos[k * 3 + 2] = r * cellZ - T.sizeZ / 2;
+        uv[k * 2] = c / (W - 1); uv[k * 2 + 1] = 1 - r / (H - 1);   // whole-area UV
+        k++;
+      }
+      const idx = [];
+      for (let r = 0; r < nr - 1; r++) for (let c = 0; c < nc - 1; c++) {
+        const a = r * nc + c, b = a + 1, d = a + nc, e = d + 1;
+        idx.push(a, d, b, b, d, e);
+      }
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+      geo.setIndex(idx);
+      geo.computeVertexNormals();
+      const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map: topoTexture, roughness: 1, metalness: 0 }));
+      world.add(mesh);
+      chunks.push({ mesh, x0: c0 * cellX - T.sizeX / 2, x1: c1 * cellX - T.sizeX / 2, z0: r0 * cellZ - T.sizeZ / 2, z1: r1 * cellZ - T.sizeZ / 2,
+        u0: c0 / (W - 1), u1: c1 / (W - 1), v0: 1 - r1 / (H - 1), v1: 1 - r0 / (H - 1), detail: null, sea: true });
+    }
+  }
+  // Chunks that are entirely sea never need sharp imagery.
+  for (const ch of chunks) {
+    for (let r = Math.round((ch.z0 + T.sizeZ / 2) / cellZ); r <= Math.round((ch.z1 + T.sizeZ / 2) / cellZ) && ch.sea; r++)
+      for (let c = Math.round((ch.x0 + T.sizeX / 2) / cellX); c <= Math.round((ch.x1 + T.sizeX / 2) / cellX); c++)
+        if (heights[r * W + c] >= 0) { ch.sea = false; break; }
+  }
+  // Normals along chunk seams are computed per chunk, which leaves faint lines; smooth them.
+  stitchChunkNormals();
 
   waterMesh = new THREE.Mesh(
     new THREE.PlaneGeometry(T.sizeX * 4, T.sizeZ * 4).rotateX(-Math.PI / 2),
     new THREE.MeshStandardMaterial({ color: 0x1f6f8b, roughness: 0.25, metalness: 0.1, transparent: true, opacity: 0.88 }));
   waterMesh.position.y = -0.3;
   world.add(waterMesh);
+}
+
+function stitchChunkNormals() {
+  // Recompute every vertex normal from the global heightmap so seams match exactly.
+  const W = T.width, H = T.height, cellX = T.sizeX / (W - 1), cellZ = T.sizeZ / (H - 1);
+  for (const ch of chunks) {
+    const pos = ch.mesh.geometry.attributes.position, nor = ch.mesh.geometry.attributes.normal;
+    for (let i = 0; i < pos.count; i++) {
+      const c = Math.round((pos.getX(i) + T.sizeX / 2) / cellX), r = Math.round((pos.getZ(i) + T.sizeZ / 2) / cellZ);
+      const hl = heights[r * W + Math.max(c - 1, 0)], hr = heights[r * W + Math.min(c + 1, W - 1)];
+      const hu = heights[Math.max(r - 1, 0) * W + c], hd = heights[Math.min(r + 1, H - 1) * W + c];
+      const n = new THREE.Vector3(-(hr - hl) / (2 * cellX), 1, -(hd - hu) / (2 * cellZ)).normalize();
+      nor.setXYZ(i, n.x, n.y, n.z);
+    }
+    nor.needsUpdate = true;
+  }
 }
 
 // Hypsometric tint + hillshade + contour lines, drawn into a canvas.
@@ -385,45 +435,220 @@ function makeTopoTexture() {
   return tex;
 }
 
-// Satellite imagery: stitch Esri World Imagery tiles covering the bbox.
-async function loadSatellite(onProgress) {
-  const z = renderer.capabilities.maxTextureSize >= 4096 ? 15 : 14;
+// ---------------------------------------------------------------------------
+// Imagery sources. Esri World Imagery is free and needs no key. Google
+// satellite tiles (Map Tiles API) are optional: they need the Google key with
+// "Map Tiles API" enabled, and are usually newer and sharper in Brazil.
+// ---------------------------------------------------------------------------
+const imagery = { source: 'esri', googleSession: null, maxZoom: 18 };
+
+async function initImagery() {
+  imagery.source = 'esri';
+  if (settings.imagery === 'google' && googleKey()) {
+    try {
+      const res = await fetch(`https://tile.googleapis.com/v1/createSession?key=${encodeURIComponent(googleKey())}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mapType: 'satellite', language: 'en-US', region: 'BR' }),
+      });
+      const j = await res.json();
+      if (!res.ok || !j.session) throw new Error(j.error?.message || `HTTP ${res.status}`);
+      imagery.googleSession = j.session; imagery.source = 'google'; imagery.maxZoom = 19;
+    } catch (e) {
+      console.warn('Google tiles unavailable', e);
+      toast('Google imagery unavailable (' + e.message + '). Using Esri imagery. Enable "Map Tiles API" for your key to use Google.', 8000);
+      settings.imagery = 'esri'; saveSettings();
+    }
+  }
+  $('attrib').textContent = (imagery.source === 'google' ? 'Imagery © Google' : 'Imagery © Esri') + ' · Trails © OpenStreetMap contributors · Terrain SRTM';
+}
+
+function tileUrl(z, x, y) {
+  if (imagery.source === 'google') return `https://tile.googleapis.com/v1/2dtiles/${z}/${x}/${y}?session=${imagery.googleSession}&key=${encodeURIComponent(googleKey())}`;
+  return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
+}
+
+// Global tile download queue with limited concurrency (mobile networks).
+const tileQueue = []; let tileActive = 0;
+function fetchTile(z, x, y) {
+  return new Promise((resolve) => {
+    tileQueue.push({ z, x, y, resolve });
+    pumpTiles();
+  });
+}
+function pumpTiles() {
+  while (tileActive < 6 && tileQueue.length) {
+    const job = tileQueue.shift(); tileActive++;
+    const im = new Image(); im.crossOrigin = 'anonymous';
+    const done = (ok) => { tileActive--; job.resolve(ok ? im : null); pumpTiles(); };
+    im.onload = () => done(true); im.onerror = () => done(false);
+    im.src = tileUrl(job.z, job.x, job.y);
+  }
+}
+
+// Mosaic of tiles covering a mercator rectangle [mx0,mx1]×[my0,my1] at zoom z.
+async function mosaic(mx0, mx1, my0, my1, z, onProgress) {
   const n = 2 ** z;
-  const px0 = MX0 * n * 256, px1 = MX1 * n * 256, py0 = MY0 * n * 256, py1 = MY1 * n * 256;
-  const W = Math.round(px1 - px0), H = Math.round(py1 - py0);
+  const px0 = mx0 * n * 256, px1 = mx1 * n * 256, py0 = my0 * n * 256, py1 = my1 * n * 256;
+  const W = Math.max(1, Math.round(px1 - px0)), H = Math.max(1, Math.round(py1 - py0));
   const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
   const ctx = cv.getContext('2d');
   ctx.fillStyle = '#1f4f5f'; ctx.fillRect(0, 0, W, H);
-  const tiles = [];
-  for (let ty = Math.floor(py0 / 256); ty <= Math.floor(py1 / 256); ty++)
-    for (let tx = Math.floor(px0 / 256); tx <= Math.floor(px1 / 256); tx++) tiles.push([tx, ty]);
+  const jobs = [];
+  for (let ty = Math.floor(py0 / 256); ty < py1 / 256; ty++)
+    for (let tx = Math.floor(px0 / 256); tx < px1 / 256; tx++) jobs.push([tx, ty]);
   let done = 0, failed = 0;
-  const loadOne = ([tx, ty]) => new Promise((resolve) => {
-    const im = new Image();
-    im.crossOrigin = 'anonymous';
-    im.onload = () => { ctx.drawImage(im, tx * 256 - px0, ty * 256 - py0); resolve(); };
-    im.onerror = () => { failed++; resolve(); };
-    im.src = IMAGERY.replace('{z}', z).replace('{x}', tx).replace('{y}', ty);
-  }).then(() => onProgress(++done / tiles.length));
-  // Limited concurrency so mobile networks don't choke.
-  const queue = tiles.slice();
-  await Promise.all(Array.from({ length: 8 }, async () => { while (queue.length) await loadOne(queue.shift()); }));
-  if (failed > tiles.length * 0.5) throw new Error('imagery unavailable');
+  await Promise.all(jobs.map(async ([tx, ty]) => {
+    const im = await fetchTile(z, tx, ty);
+    if (im) ctx.drawImage(im, tx * 256 - px0, ty * 256 - py0); else failed++;
+    onProgress?.(++done / jobs.length);
+  }));
+  if (failed > jobs.length * 0.5) throw new Error('imagery unavailable');
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  tex.generateMipmaps = true;
   return tex;
 }
 
+// Coarse whole-area imagery (one texture, ~5 m/px).
+async function loadBaseImagery(onProgress) {
+  const z = renderer.capabilities.maxTextureSize >= 4096 ? 15 : 14;
+  return mosaic(MX0, MX1, MY0, MY1, z, onProgress);
+}
+
+function chunkMerc(ch) {
+  const fx = (x) => MX0 + (x + T.sizeX / 2) / T.sizeX * (MX1 - MX0);
+  const fz = (z) => MY0 + (z + T.sizeZ / 2) / T.sizeZ * (MY1 - MY0);
+  return { mx0: fx(ch.x0), mx1: fx(ch.x1), my0: fz(ch.z0), my1: fz(ch.z1) };
+}
+
+// Sharp imagery streaming: pick chunks near the camera target, load a zoom
+// 17/18 mosaic for each (cropped to the chunk), and keep a bounded cache.
+const detailCache = new Map();   // key -> { tex, used }
+const detailLoading = new Set();
+const DETAIL_LIMIT = { 18: 12, 17: 16 };
+let lastDetailCheck = 0;
+
+function detailZoomFor(camDist) {
+  if (settings.layer !== 'satellite' || !settings.hires) return null;
+  if (camDist < 1800) return Math.min(18, imagery.maxZoom);
+  if (camDist < 5000) return 17;
+  return null;
+}
+
+function updateDetail() {
+  const now = performance.now();
+  if (now - lastDetailCheck < 400 || !baseTexture) return;
+  lastDetailCheck = now;
+  const camDist = camera.position.distanceTo(controls.target);
+  const z = detailZoomFor(camDist);
+  const tx = controls.target.x, tz = controls.target.z;
+  const radius = z === 18 ? 1500 : 3500;
+  const wanted = [];
+  for (const ch of chunks) {
+    if (ch.sea) continue;
+    const cx = (ch.x0 + ch.x1) / 2, cz = (ch.z0 + ch.z1) / 2;
+    const d = Math.hypot(cx - tx, cz - tz);
+    if (z && d < radius) wanted.push([d, ch]);
+  }
+  wanted.sort((a, b) => a[0] - b[0]);
+  const keep = new Set();
+  for (const [, ch] of wanted.slice(0, z ? DETAIL_LIMIT[z] : 0)) {
+    // If the source has no tiles at this zoom for this chunk, settle for the next coarser one.
+    const mk = (zz) => `${ch.x0}|${ch.z0}|${zz}|${imagery.source}`;
+    let zz = z, key = mk(zz);
+    while (detailCache.get(key)?.failed && zz > 17) { zz--; key = mk(zz); }
+    if (detailCache.get(key)?.failed) continue;
+    keep.add(key);
+    const hit = detailCache.get(key);
+    if (hit) { hit.used = now; applyChunkTexture(ch, hit.tex, key); continue; }
+    if (detailLoading.has(key) || detailLoading.size >= 4) continue;
+    detailLoading.add(key);
+    const m = chunkMerc(ch);
+    mosaic(m.mx0, m.mx1, m.my0, m.my1, zz).then((tex) => {
+      // The mosaic covers exactly the chunk; map the chunk's whole-area UVs onto it.
+      tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+      tex.repeat.set(1 / (ch.u1 - ch.u0), 1 / (ch.v1 - ch.v0));
+      tex.offset.set(-ch.u0 / (ch.u1 - ch.u0), -ch.v0 / (ch.v1 - ch.v0));
+      detailCache.set(key, { tex, used: performance.now() });
+      evictDetail();
+    }).catch(() => { detailCache.set(key, { failed: true, used: performance.now() }); }).finally(() => detailLoading.delete(key));
+  }
+  // Chunks no longer wanted at this zoom fall back to a coarser cached level or the base.
+  for (const ch of chunks) {
+    if (ch.detail && !keep.has(ch.detail)) {
+      const alt = [18, 17].map((zz) => `${ch.x0}|${ch.z0}|${zz}|${imagery.source}`).find((k) => keep.has(k) || detailCache.has(k));
+      if (alt && detailCache.get(alt)?.tex) applyChunkTexture(ch, detailCache.get(alt).tex, alt);
+      else applyChunkTexture(ch, baseTexture, null);
+    }
+  }
+}
+
+function applyChunkTexture(ch, tex, key) {
+  if (ch.mesh.material.map === tex) return;
+  ch.mesh.material.map = tex; ch.mesh.material.needsUpdate = true; ch.detail = key;
+}
+
+function evictDetail() {
+  const limit = DETAIL_LIMIT[18] + DETAIL_LIMIT[17] + 8;
+  if (detailCache.size <= limit) return;
+  const inUse = new Set(chunks.map((c) => c.detail));
+  const victims = [...detailCache.entries()].filter(([k, v]) => !inUse.has(k) && v.tex).sort((a, b) => a[1].used - b[1].used);
+  for (const [k, v] of victims.slice(0, detailCache.size - limit)) { v.tex.dispose(); detailCache.delete(k); }
+}
+
+function clearDetail() {
+  for (const ch of chunks) if (ch.detail) applyChunkTexture(ch, settings.layer === 'satellite' && baseTexture ? baseTexture : topoTexture, null);
+  for (const v of detailCache.values()) v.tex?.dispose();
+  detailCache.clear();
+}
+
 function applyLayer() {
-  const sat = settings.layer === 'satellite' && satTexture;
-  terrainMesh.material.map = sat ? satTexture : topoTexture;
-  terrainMesh.material.needsUpdate = true;
+  const sat = settings.layer === 'satellite' && baseTexture;
+  for (const ch of chunks) {
+    if (sat && ch.detail && detailCache.get(ch.detail)?.tex) continue;
+    applyChunkTexture(ch, sat ? baseTexture : topoTexture, null);
+  }
   waterMesh.visible = !sat;
+  if (buildingsMesh) buildingsMesh.visible = settings.show.buildings;
 }
 
 function applyExaggeration() {
   world.scale.y = settings.exaggeration;
+}
+
+// ---------------------------------------------------------------------------
+// Buildings: OpenStreetMap footprints extruded onto the terrain.
+// ---------------------------------------------------------------------------
+let buildingsMesh = null;
+
+function buildBuildings(footprints) {
+  if (buildingsMesh) { world.remove(buildingsMesh); buildingsMesh.geometry.dispose(); buildingsMesh = null; }
+  const geos = [];
+  for (const b of footprints) {
+    const ring = b.geometry;
+    if (!ring || ring.length < 4) continue;
+    const pts = ring.map((p) => toLocal(p.lat, p.lon));
+    let base = Infinity, top = -Infinity;
+    for (const p of pts) { const h = heightAt(p.x, p.z); base = Math.min(base, h); top = Math.max(top, h); }
+    if (base < 0) continue;
+    const t = b.tags || {};
+    let height = parseFloat(t.height) || (parseFloat(t['building:levels']) || 0) * 3.2
+      || ({ church: 10, cathedral: 14, hotel: 9, apartments: 9, commercial: 5, industrial: 6, warehouse: 6 }[t.building] || 4);
+    // Shape in XZ: three.js Shape is 2D (x, y); we map y → -z so winding stays sane after rotation.
+    const shape = new THREE.Shape(pts.map((p) => new THREE.Vector2(p.x, -p.z)));
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: height + (top - base), bevelEnabled: false, curveSegments: 1 });
+    geo.rotateX(-Math.PI / 2);          // extrude along +Y
+    geo.translate(0, base, 0);
+    geos.push(geo);
+  }
+  if (!geos.length) return;
+  const merged = mergeGeometries(geos, false);
+  for (const g of geos) g.dispose();
+  merged.computeVertexNormals();
+  buildingsMesh = new THREE.Mesh(merged, new THREE.MeshStandardMaterial({ color: 0xf2e9dc, roughness: 0.9, metalness: 0, flatShading: true }));
+  buildingsMesh.visible = settings.show.buildings;
+  world.add(buildingsMesh);
 }
 
 // ---------------------------------------------------------------------------
@@ -449,6 +674,7 @@ function overpassQuery() {
   way["highway"~"^(path|footway|track|bridleway|steps|cycleway|pedestrian)$"](${b});
   way["highway"~"^(primary|secondary|tertiary|unclassified|residential|living_street|service)$"](${b});
   relation["route"~"^(hiking|foot|walking)$"](${b});
+  way["building"](${b});
 );
 out geom;
 (
@@ -479,7 +705,7 @@ async function fetchOSM() {
 }
 
 // Trail data is cached with the Cache API (it can be several MB — too big for localStorage).
-const OSM_CACHE = 'itacare-osm-v3', OSM_KEY = 'osm-data.json';
+const OSM_CACHE = 'itacare-osm-v4', OSM_KEY = 'osm-data.json';
 async function cachedOSM() {
   try { const r = await (await caches.open(OSM_CACHE)).match(OSM_KEY); return r ? await r.json() : null; } catch { return null; }
 }
@@ -507,6 +733,7 @@ function densify(latlon) {
 
 function buildTrails(osm) {
   trails = []; pois = []; venues = [];
+  const buildings = [];
   const routeWays = new Set();
   for (const el of osm.elements) {
     if (el.type === 'relation' && el.members) {
@@ -519,6 +746,7 @@ function buildTrails(osm) {
     }
   }
   for (const el of osm.elements) {
+    if (el.type === 'way' && el.geometry && el.tags?.building) buildings.push(el);
     if (el.type === 'way' && el.geometry && el.tags?.highway) {
       if (routeWays.has(el.id)) continue;
       const cat = classify(el.tags);
@@ -566,6 +794,7 @@ function buildTrails(osm) {
     trailLayers[cat] = line;
   }
   buildGraph();
+  buildBuildings(buildings);
   buildLabels();
   applyRatings();
   applyVisibility();
@@ -1494,6 +1723,12 @@ $('btnLayers').addEventListener('click', () => {
     <div class="row"><div class="seg" id="segLayer">
       <button data-v="satellite" class="${settings.layer === 'satellite' ? 'on' : ''}">Satellite</button>
       <button data-v="topo" class="${settings.layer === 'topo' ? 'on' : ''}">Topo / contours</button></div></div>
+    <div class="row"><span>Imagery</span><div class="seg" id="segSrc">
+      <button data-v="esri" class="${settings.imagery === 'esri' ? 'on' : ''}">Esri</button>
+      <button data-v="google" class="${settings.imagery === 'google' ? 'on' : ''}">Google</button></div></div>
+    <div class="row"><label><input type="checkbox" data-k="hires" ${settings.hires ? 'checked' : ''}>Sharp imagery near the camera (uses more data)</label></div>
+    <div class="row"><label><input type="checkbox" data-k="buildings" ${settings.show.buildings ? 'checked' : ''}>
+      <span style="display:inline-block;width:10px;height:10px;background:#f2e9dc;border:1px solid #999"></span>3D buildings (OpenStreetMap)</label></div>
     <div class="row"><span>Vertical exaggeration</span><input type="range" id="exag" min="1" max="4" step="0.1" value="${settings.exaggeration}"><b id="exagV">${settings.exaggeration}×</b></div>
     ${Object.entries(CATEGORIES).map(([k, c]) => `<div class="row"><label><input type="checkbox" data-k="${k}" ${settings.show[k] ? 'checked' : ''}>
       <span class="sw" style="display:inline-block;width:18px;height:4px;border-radius:2px;background:${hex(c.color)}"></span>${c.label}</label></div>`).join('')}
@@ -1507,11 +1742,11 @@ $('btnLayers').addEventListener('click', () => {
       : 'OpenStreetMap has no ratings. To show Google ratings, paste a Google Maps Platform API key with <b>Places API (New)</b> enabled. The key is stored only on this device. Results are cached for a week.'}</div>
     <div class="row"><input type="search" id="gkey" placeholder="${BUILT_IN_KEY ? 'Override Google API key (optional)' : 'Google API key'}" value="${escapeHtml(settings.googleKey)}" autocomplete="off" spellcheck="false"></div>
     <div class="row"><button class="pill" id="saveKey">Save &amp; load ratings</button>${settings.googleKey ? '<button class="pill" id="clearKey">Remove key</button>' : ''}</div>
-    <div class="small">Terrain: SRTM via AWS Terrain Tiles. Imagery: Esri World Imagery. Trails: © OpenStreetMap contributors (ODbL).
+    <div class="small">Terrain: SRTM via AWS Terrain Tiles. Imagery: Esri World Imagery or Google (Map Tiles API). Trails and buildings: © OpenStreetMap contributors (ODbL).
     Contours every 10 m, bold every 50 m.</div>`);
   $('segLayer').addEventListener('click', (e) => {
     const v = e.target.dataset.v; if (!v) return;
-    if (v === 'satellite' && !satTexture) toast('Satellite imagery is still loading or unavailable offline.');
+    if (v === 'satellite' && !baseTexture) toast('Satellite imagery is still loading or unavailable offline.');
     settings.layer = v; saveSettings(); applyLayer();
     for (const b of $('segLayer').children) b.classList.toggle('on', b.dataset.v === v);
   });
@@ -1520,8 +1755,21 @@ $('btnLayers').addEventListener('click', () => {
     applyExaggeration(); saveSettings();
   });
   $('sheetBody').querySelectorAll('input[type=checkbox]').forEach((cb) => cb.addEventListener('change', () => {
-    settings.show[cb.dataset.k] = cb.checked; saveSettings(); applyVisibility();
+    if (cb.dataset.k === 'hires') { settings.hires = cb.checked; if (!cb.checked) clearDetail(); }
+    else settings.show[cb.dataset.k] = cb.checked;
+    saveSettings(); applyVisibility(); applyLayer();
   }));
+  $('segSrc').addEventListener('click', async (e) => {
+    const v = e.target.dataset.v; if (!v || v === settings.imagery) return;
+    if (v === 'google' && !googleKey()) { toast('Google imagery needs a Google API key (see Ratings below) with "Map Tiles API" enabled.', 6000); return; }
+    settings.imagery = v; saveSettings();
+    for (const b of $('segSrc').children) b.classList.toggle('on', b.dataset.v === v);
+    clearDetail();
+    await initImagery();
+    for (const b of $('segSrc').children) b.classList.toggle('on', b.dataset.v === settings.imagery);
+    toast('Loading imagery…');
+    loadBaseImagery().then((tex) => { baseTexture?.dispose(); baseTexture = tex; applyLayer(); }).catch(() => toast('Imagery unavailable.'));
+  });
   $('refreshOsm').addEventListener('click', () => loadTrails(true));
   $('minRating').addEventListener('input', (e) => {
     settings.minRating = +e.target.value;
@@ -1685,6 +1933,7 @@ function animate() {
   controls.update();
   clampTarget();
   updateMarker();
+  updateDetail();
   updateLabels();
   updateVenues();
   updateCompass();
@@ -1709,8 +1958,8 @@ async function main() {
   loadTrails().then(() => loadRatings());
   setStatus('Loading satellite imagery…');
   // GPS readouts take priority over loading messages in the status line.
-  loadSatellite((p) => { if (p < 1 && !gps.fix) setStatus(`Loading satellite imagery… ${Math.round(p * 100)}%`); })
-    .then((tex) => { satTexture = tex; applyLayer(); })
+  initImagery().then(() => loadBaseImagery((p) => { if (p < 1 && !gps.fix) setStatus(`Loading satellite imagery… ${Math.round(p * 100)}%`); }))
+    .then((tex) => { baseTexture = tex; applyLayer(); })
     .catch(() => { toast('Satellite imagery unavailable — showing topo map.'); settings.layer = 'topo'; applyLayer(); })
     .finally(() => { if (!gps.fix) setStatus(trails.length ? trailSummary() : 'Trails unavailable (offline?) — terrain only'); });
   applyLayer();

@@ -2,7 +2,7 @@
 // - App shell + terrain data are pre-cached on install.
 // - Satellite tiles are cached the first time they are fetched (cache-first).
 // - Trail data is cached by the page itself (Cache API, see index.html).
-const VERSION = 'v4';
+const VERSION = 'v5';
 const SHELL = `itacare-shell-${VERSION}`;
 const TILES = 'itacare-tiles-v1';
 
@@ -23,6 +23,7 @@ const SHELL_FILES = [
   './vendor/LineMaterial.js',
   './vendor/LineSegments2.js',
   './vendor/LineSegmentsGeometry.js',
+  './vendor/BufferGeometryUtils.js',
 ];
 
 self.addEventListener('install', (e) => {
@@ -40,13 +41,15 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
 
-  if (url.hostname === 'server.arcgisonline.com') {
-    // Imagery tiles never change for our purposes: cache-first.
+  if (url.hostname === 'server.arcgisonline.com' || (url.hostname === 'tile.googleapis.com' && url.pathname.includes('/2dtiles/'))) {
+    // Imagery tiles never change for our purposes: cache-first. Google tile URLs carry a
+    // per-session token, so the cache key is the URL without its query string.
+    const key = url.origin + url.pathname;
     e.respondWith(caches.open(TILES).then(async (c) => {
-      const hit = await c.match(req);
+      const hit = await c.match(key);
       if (hit) return hit;
       const res = await fetch(req);
-      if (res.ok) c.put(req, res.clone());
+      if (res.ok) c.put(key, res.clone());
       return res;
     }));
     return;
