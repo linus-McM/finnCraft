@@ -4,7 +4,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches: [main, claude/itacare-3d-gps-map-s3qp9u]
   workflow_dispatch:
 
 permissions:
