@@ -920,8 +920,28 @@ function updateVenues() {
 }
 
 const stars = (r) => '★'.repeat(Math.round(r)) + '☆'.repeat(5 - Math.round(r));
-// Review-count confidence colour: lots of reviews = green, some = amber, few = red.
-const reviewColor = (n) => (n ?? 0) >= 250 ? '#3ddc84' : (n ?? 0) >= 100 ? '#ffb547' : '#ff5a5f';
+// Review-count confidence colour, relative to every other rated place on the map:
+// the venue's percentile of review count maps onto a red → amber → green gradient,
+// so the most-reviewed places here are green whatever the absolute numbers are.
+let reviewCounts = [];   // sorted counts of all rated venues, rebuilt when ratings load
+function updateReviewScale() {
+  reviewCounts = venues.filter((v) => v.rating != null).map((v) => v.ratingCount ?? 0).sort((a, b) => a - b);
+}
+function reviewRank(n) {
+  if (!reviewCounts.length) return 0.5;
+  // Fraction of rated places with fewer (or equal) reviews, mid-ranked on ties.
+  let lo = 0, hi = reviewCounts.length;
+  while (lo < hi) { const m = (lo + hi) >> 1; if (reviewCounts[m] < n) lo = m + 1; else hi = m; }
+  let lo2 = lo, hi2 = reviewCounts.length;
+  while (lo2 < hi2) { const m = (lo2 + hi2) >> 1; if (reviewCounts[m] <= n) lo2 = m + 1; else hi2 = m; }
+  return reviewCounts.length === 1 ? 1 : ((lo + lo2 - 1) / 2) / (reviewCounts.length - 1);
+}
+const lerpHex = (a, b, t) => '#' + [0, 2, 4].map((i) => Math.round(parseInt(a.slice(1 + i, 3 + i), 16) * (1 - t)
+  + parseInt(b.slice(1 + i, 3 + i), 16) * t).toString(16).padStart(2, '0')).join('');
+function reviewColor(n) {
+  const r = Math.max(0, Math.min(1, reviewRank(n ?? 0)));
+  return r < 0.5 ? lerpHex('#ff5a5f', '#ffb547', r * 2) : lerpHex('#ffb547', '#3ddc84', (r - 0.5) * 2);
+}
 const ratingBadge = (v) => `<span class="rbadge" style="--rc:${reviewColor(v.ratingCount)}" title="${v.ratingCount ?? 0} Google reviews">${v.rating.toFixed(1)}</span>`;
 // Google's own listing (business profile with reviews, photos, hours) in a new tab.
 const googleListingUrl = (v) => `https://www.google.com/search?q=${encodeURIComponent(v.name + ' Itacaré Bahia')}`;
@@ -1043,6 +1063,7 @@ function applyRatings() {
       }
     }
   }
+  updateReviewScale();
   buildVenueMarkers();
 }
 
@@ -1789,8 +1810,9 @@ $('btnLayers').addEventListener('click', () => {
     <div class="row"><label><input type="checkbox" data-k="labels" ${settings.show.labels ? 'checked' : ''}>Beach &amp; place names</label></div>
     ${Object.entries(VENUE_GROUPS).map(([k, g]) => `<div class="row"><label><input type="checkbox" data-k="${k}" ${settings.show[k] ? 'checked' : ''}>
       <span style="display:inline-block;width:10px;height:10px;border-radius:50%;border:2px solid ${g.color}"></span>${g.label}</label></div>`).join('')}
-    <div class="small">Rating colour = number of Google reviews: <span class="rbadge" style="--rc:#3ddc84">250+</span>
-      <span class="rbadge" style="--rc:#ffb547">100+</span> <span class="rbadge" style="--rc:#ff5a5f">&lt;100</span></div>
+    <div class="small">Rating colour = how many Google reviews a place has compared with the others on this map
+      (red = fewest, green = most${reviewCounts.length ? `; median ${reviewCounts[reviewCounts.length >> 1]}, top ${reviewCounts[reviewCounts.length - 1]}` : ''}):
+      <span style="display:inline-block;vertical-align:middle;width:120px;height:10px;border-radius:5px;background:linear-gradient(90deg,#ff5a5f,#ffb547,#3ddc84)"></span></div>
     <div class="row"><span>Minimum rating</span><input type="range" id="minRating" min="0" max="4.8" step="0.1" value="${settings.minRating}"><b id="minRatingV">${settings.minRating ? settings.minRating.toFixed(1) + '★' : 'any'}</b></div>
     <div class="row"><button class="pill" id="refreshOsm">Refresh trail &amp; venue data</button></div>
     <h2 style="margin-top:14px">Ratings</h2>
