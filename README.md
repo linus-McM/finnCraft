@@ -20,8 +20,9 @@ Built with plain HTML + JavaScript and [three.js](https://threejs.org). No build
   Tap a marker to see its rating, cuisine, opening hours, phone, website, distance and directions.
   You can filter by type or by minimum rating.
 - **Places**: beaches, viewpoints, waterfalls, sights and towns as tappable labels, with a list sorted by distance from you.
-- **Route here**: from any place, restaurant, trail or tapped map point, computes the shortest walking route from your
-  live GPS position along the real trail and road network, draws it on the 3D map, and shows remaining distance,
+- **Route here**: from any place, restaurant, trail or tapped map point, computes the shortest route from your
+  live GPS position along the real trail and road network, for **moped / e-bike** (default: roads, tracks, cycleways and
+  paths OpenStreetMap marks as open to bicycles or mopeds; no footpaths, steps or private roads) or **walking** (everything), draws it on the 3D map, and shows remaining distance,
   estimated time, climb and compass direction. It re-routes if you leave the path and tells you when you arrive.
   If the data has no connected path, a dashed straight line is drawn instead.
 - **List view** with search: Places, Food & drink (sorted by rating) and Trails tabs.

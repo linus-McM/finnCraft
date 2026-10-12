@@ -156,7 +156,7 @@
 </div>
 
 <div id="sheet" class="panel"><button class="close" id="sheetClose">×</button><div id="sheetBody"></div></div>
-<div id="nav" class="panel"><span class="txt"></span><button id="navFit" title="Show whole route">⤢</button><button id="navStop" title="Stop">✕</button></div>
+<div id="nav" class="panel"><span class="txt"></span><button id="navMode" title="Switch walk / moped">🛵</button><button id="navFit" title="Show whole route">⤢</button><button id="navStop" title="Stop">✕</button></div>
 <div id="toast" class="panel"></div>
 <div id="attrib">Imagery © Esri · Trails © OpenStreetMap contributors · Terrain SRTM</div>
 
@@ -199,7 +199,7 @@ const store = {
 };
 const savedSettings = store.get('itacare.settings', {});
 const BUILT_IN_KEY = (window.ITACARE_CONFIG && window.ITACARE_CONFIG.googleKey) || '';
-const settings = Object.assign({ layer: 'satellite', imagery: 'esri', hires: true, exaggeration: 1.5, minRating: 0, googleKey: '' }, savedSettings, {
+const settings = Object.assign({ layer: 'satellite', imagery: 'esri', hires: true, exaggeration: 1.5, minRating: 0, googleKey: '', routeMode: 'moped' }, savedSettings, {
   show: Object.assign({ route: true, path: true, track: true, steps: true, road: true, labels: true,
     restaurant: true, bar: true, cafe: true, buildings: true }, savedSettings.show),
 });
@@ -750,7 +750,11 @@ function buildTrails(osm) {
   for (const el of osm.elements) {
     if (el.type === 'way' && el.geometry && el.tags?.building) buildings.push(el);
     if (el.type === 'way' && el.geometry && el.tags?.highway) {
-      if (routeWays.has(el.id)) continue;
+      if (routeWays.has(el.id)) {
+        // Route relations carry the relation's tags; keep the way's own tags for access checks.
+        for (const t of trails) if (t.rel && t.id.endsWith('-' + el.id)) t.wayTags = el.tags;
+        continue;
+      }
       const cat = classify(el.tags);
       if (!cat) continue;
       const fallback = { path: 'Unnamed trail', track: 'Unnamed track', steps: 'Steps', road: 'Unnamed road' }[cat];
@@ -1117,7 +1121,7 @@ function selectPlace(p) {
 function routeButtons(dest) {
   return `<div class="row">
     <button class="pill go" id="routeHere">🧭 Route here</button>
-    <a class="pill" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${dest.lat},${dest.lon}&travelmode=walking">Google directions ↗</a>
+    <a class="pill" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=${dest.lat},${dest.lon}&travelmode=${settings.routeMode === 'moped' ? 'driving' : 'walking'}">Google directions ↗</a>
   </div>`;
 }
 function bindRouteButtons(dest) {
@@ -1129,6 +1133,32 @@ function bindRouteButtons(dest) {
 // phone's live GPS position to a chosen destination. Pure client-side Dijkstra.
 // ---------------------------------------------------------------------------
 const graph = { nodes: [], adj: [], edges: [] };   // nodes: {lat,lon,x,z}; adj[i]: [[j, cost], ...]
+
+// Which ways may a given travel mode use, and how "expensive" they feel.
+// Returns a cost multiplier, or null when the way is not allowed in that mode.
+const ROUTE_MODES = { moped: { icon: '🛵', label: 'Moped / e-bike', kmh: 15 }, walk: { icon: '🚶', label: 'Walk', kmh: 5 } };
+function modeFactor(t, mode) {
+  const g = t.wayTags || t.tags || {};
+  const h = g.highway;
+  const no = (v) => v === 'no' || v === 'private';
+  const yes = (v) => v === 'yes' || v === 'designated' || v === 'permissive';
+  if (mode === 'walk') {
+    if (no(g.foot) || (no(g.access) && !yes(g.foot))) return null;
+    return h === 'steps' ? 1.3 : 1;
+  }
+  // Moped / e-bike: legal for motor vehicles or bicycles, and physically rideable.
+  const explicit = yes(g.moped) || yes(g.mofa) || yes(g.motor_vehicle);
+  if (no(g.access) && !explicit && !yes(g.bicycle)) return null;
+  if (no(g.motor_vehicle) && !yes(g.moped) && !yes(g.mofa) && !yes(g.bicycle)) return null;
+  if (no(g.vehicle) || no(g.moped)) return null;
+  if (!h && t.cat === 'route') return null;            // hiking route with no road data
+  if (['steps', 'footway', 'pedestrian', 'corridor'].includes(h)) return null;
+  if (h === 'path' || h === 'bridleway') return (explicit || yes(g.bicycle)) ? 1.8 : null;
+  if (h === 'cycleway') return g.bicycle === 'no' ? null : 1.1;
+  if (h === 'track') return g.tracktype === 'grade5' ? 2.2 : 1.4;
+  if (h === 'motorway' || h === 'motorway_link' || h === 'trunk') return null;
+  return 1;
+}
 
 function buildGraph() {
   graph.nodes = []; graph.adj = []; graph.edges = [];
@@ -1145,9 +1175,10 @@ function buildGraph() {
     }
     return i;
   };
+  graph.mode = settings.routeMode;
   for (const t of trails) {
-    // Steps and rough tracks feel longer than their length; slight penalty.
-    const factor = t.cat === 'steps' ? 1.3 : 1;
+    const factor = modeFactor(t, settings.routeMode);
+    if (factor == null) continue;
     for (let i = 1; i < t.latlon.length; i++) {
       const a = nodeFor(t.latlon[i - 1]), b = nodeFor(t.latlon[i]);
       if (a === b) continue;
@@ -1189,6 +1220,7 @@ class MinHeap {
 
 // Returns { points:[{lat,lon}], length } along the network, or null if unreachable.
 function findRoute(from, to) {
+  if (graph.mode !== settings.routeMode) buildGraph();
   if (!graph.edges.length) return null;
   const s = snapToNetwork(from.lat, from.lon), e = snapToNetwork(to.lat, to.lon);
   if (!s || !e) return null;
@@ -1323,7 +1355,8 @@ function routeProgress() {
 function updateNavBanner() {
   if (!nav.dest || !nav.route || !gps.fix) return;
   const pr = routeProgress();
-  const mins = Math.round(pr.remaining / 1000 * 12 + pr.up / 10);
+  const m = ROUTE_MODES[settings.routeMode];
+  const mins = Math.round(pr.remaining / 1000 / m.kmh * 60 + (settings.routeMode === 'walk' ? pr.up / 10 : 0));
   const bearing = (() => {
     const toR = Math.PI / 180, a = gps.fix, b = nav.dest;
     const y = Math.sin((b.lon - a.lon) * toR) * Math.cos(b.lat * toR);
@@ -1331,8 +1364,8 @@ function updateNavBanner() {
     const deg = (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
     return ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(deg / 45) % 8];
   })();
-  showNav(`<b>${escapeHtml(nav.dest.name)}</b> · ${fmtKm(pr.remaining)} · ~${mins} min · ↑${Math.round(pr.up)} m · ${bearing}`
-    + (nav.route.straight ? ' · <i>no mapped path, straight line</i>' : pr.offRoute > 40 ? ' · <i>off route</i>' : ''));
+  showNav(`${m.icon} <b>${escapeHtml(nav.dest.name)}</b> · ${fmtKm(pr.remaining)} · ~${mins} min · ↑${Math.round(pr.up)} m · ${bearing}`
+    + (nav.route.straight ? ` · <i>no ${settings.routeMode === 'moped' ? 'moped-suitable' : 'mapped'} path, straight line</i>` : pr.offRoute > 40 ? ' · <i>off route</i>' : ''));
 }
 
 function showNav(html) {
@@ -1349,6 +1382,15 @@ function stopNavigation() {
 }
 $('navStop').addEventListener('click', stopNavigation);
 $('navFit').addEventListener('click', () => { if (nav.route && gps.fix) fitRoute(); });
+function setRouteMode(mode) {
+  settings.routeMode = mode; saveSettings();
+  $('navMode').textContent = ROUTE_MODES[mode].icon;
+  $('navMode').title = `${ROUTE_MODES[mode].label} — tap to switch`;
+  if (nav.dest && gps.fix) computeRoute(false);
+  toast(`Routing for ${ROUTE_MODES[mode].label.toLowerCase()}.`);
+}
+$('navMode').addEventListener('click', () => setRouteMode(settings.routeMode === 'moped' ? 'walk' : 'moped'));
+$('navMode').textContent = ROUTE_MODES[settings.routeMode].icon;
 
 // Called from onPosition on every GPS fix.
 function onNavPosition() {
@@ -1737,6 +1779,10 @@ $('btnLayers').addEventListener('click', () => {
     <div class="row"><label><input type="checkbox" data-k="hires" ${settings.hires ? 'checked' : ''}>Sharp imagery near the camera (uses more data)</label></div>
     <div class="row"><label><input type="checkbox" data-k="buildings" ${settings.show.buildings ? 'checked' : ''}>
       <span style="display:inline-block;width:10px;height:10px;background:#f2e9dc;border:1px solid #999"></span>3D buildings (OpenStreetMap)</label></div>
+    <div class="row"><span>Routing</span><div class="seg" id="segMode">
+      ${Object.entries(ROUTE_MODES).map(([k, m]) => `<button data-v="${k}" class="${settings.routeMode === k ? 'on' : ''}">${m.icon} ${m.label}</button>`).join('')}</div></div>
+    <div class="small">Moped / e-bike routes use roads, streets, dirt tracks and cycleways, plus paths that OpenStreetMap marks as open to
+      bicycles or mopeds. Footpaths, steps and private roads are avoided.</div>
     <div class="row"><span>Vertical exaggeration</span><input type="range" id="exag" min="1" max="4" step="0.1" value="${settings.exaggeration}"><b id="exagV">${settings.exaggeration}×</b></div>
     ${Object.entries(CATEGORIES).map(([k, c]) => `<div class="row"><label><input type="checkbox" data-k="${k}" ${settings.show[k] ? 'checked' : ''}>
       <span class="sw" style="display:inline-block;width:18px;height:4px;border-radius:2px;background:${hex(c.color)}"></span>${c.label}</label></div>`).join('')}
@@ -1769,6 +1815,11 @@ $('btnLayers').addEventListener('click', () => {
     else settings.show[cb.dataset.k] = cb.checked;
     saveSettings(); applyVisibility(); applyLayer();
   }));
+  $('segMode').addEventListener('click', (e) => {
+    const v = e.target.closest('button')?.dataset.v; if (!v || v === settings.routeMode) return;
+    setRouteMode(v);
+    for (const b of $('segMode').children) b.classList.toggle('on', b.dataset.v === v);
+  });
   $('segSrc').addEventListener('click', async (e) => {
     const v = e.target.dataset.v; if (!v || v === settings.imagery) return;
     if (v === 'google' && !googleKey()) { toast('Google imagery needs a Google API key (see Ratings below) with "Map Tiles API" enabled.', 6000); return; }
