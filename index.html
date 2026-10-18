@@ -219,16 +219,16 @@ const REGIONS = {
     loading: 'Building 3D Itacaré…',
   },
   saopaulo: {
-    name: 'São Paulo', title: 'São Paulo 3D', blurb: 'Centro · Paulista · Pinheiros · Ibirapuera: markets, restaurants, sights',
+    name: 'São Paulo', title: 'São Paulo 3D', blurb: 'CBD · Jardins · Pinheiros · Vila Madalena · Ibirapuera: markets, restaurants, sights',
     data: 'data/saopaulo', coast: false, center: { lat: -23.5505, lon: -46.6333 }, centerName: 'Sé',
     searchSuffix: 'São Paulo', osmCache: 'saopaulo-osm-v1', ratingsCache: 'saopaulo-ratings-v1',
     buildings: false, roads: 'streets', routes: false, overpassTimeout: 180, curated: 'data/saopaulo/places.json',
     // Google Text Search returns at most 60 places per box, so the busy districts are searched separately.
     ratingRects: [
-      { low: { latitude: -23.5560, longitude: -46.6480 }, high: { latitude: -23.5330, longitude: -46.6250 } },   // Centro / Luz
-      { low: { latitude: -23.5760, longitude: -46.6800 }, high: { latitude: -23.5500, longitude: -46.6400 } },   // Paulista / Jardins / Bixiga
-      { low: { latitude: -23.5760, longitude: -46.7080 }, high: { latitude: -23.5440, longitude: -46.6800 } },   // Pinheiros / Vila Madalena
-      { low: { latitude: -23.6080, longitude: -46.6950 }, high: { latitude: -23.5760, longitude: -46.6350 } },   // Itaim / Ibirapuera / Moema / Vila Mariana
+      { low: { latitude: -23.5560, longitude: -46.6480 }, high: { latitude: -23.5250, longitude: -46.6150 } },   // CBD: Luz / Centro / República / Liberdade
+      { low: { latitude: -23.5760, longitude: -46.6800 }, high: { latitude: -23.5500, longitude: -46.6400 } },   // Paulista / Jardins / Bixiga / Higienópolis
+      { low: { latitude: -23.5760, longitude: -46.7050 }, high: { latitude: -23.5440, longitude: -46.6800 } },   // Pinheiros / Vila Madalena
+      { low: { latitude: -23.5950, longitude: -46.7050 }, high: { latitude: -23.5760, longitude: -46.6150 } },   // Itaim / Ibirapuera / Paraíso / Vila Mariana
     ],
     loading: 'Building 3D São Paulo…',
   },

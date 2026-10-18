@@ -40,8 +40,9 @@ the choice is remembered, and `?area=saopaulo` in the URL selects it directly (t
 home-screen shortcuts). Everything works the same way in both: 3D terrain, OpenStreetMap streets and paths, restaurants,
 bars and cafés with Google ratings, live GPS, and routes from your position.
 
-The São Paulo area covers the centre of the city (about 15 × 12 km: Luz, Centro, Paulista, Jardins, Pinheiros,
-Vila Madalena, Itaim, Ibirapuera, Moema, Vila Mariana, Barra Funda and Lapa, west to CEAGESP). Differences from Itacaré:
+The São Paulo area covers the CBD, Jardins and the suburbs around them (about 9 × 8 km: Luz, Centro, República,
+Liberdade, Bixiga, Higienópolis, Consolação, Paulista, Jardins, Itaim, Pinheiros, Vila Madalena, Paraíso and Vila Mariana,
+down to Ibirapuera park). Outer suburbs are deliberately left out. Differences from Itacaré:
 
 - **Data points**: besides restaurants, bars and cafés it loads **markets** (`amenity=marketplace`), **parks**, museums,
   attractions, viewpoints and neighbourhood names from OpenStreetMap, and a curated list of **top picks**
@@ -54,7 +55,8 @@ Vila Madalena, Itaim, Ibirapuera, Moema, Vila Mariana, Barra Funda and Lapa, wes
   the badge colour still ranks review counts among all rated places on the map.
 - **Terrain**: the city sits at 700–870 m, so the topo tint and contours are relative to the lowest point, and there is no sea.
 
-Picks outside the area box (Mocotó in Vila Medeiros, Mercado de Santo Amaro) are not shown. Pick coordinates were entered
+Picks outside the area box (Mocotó, Mercado de Santo Amaro, CEAGESP, Mercado da Lapa, the Água Branca fair, Komah,
+Bráz and Bar Original in Moema) are kept in the data file but not shown. Pick coordinates were entered
 by hand and are approximate until a Google key snaps them to the real listing.
 
 ## Controls
@@ -111,7 +113,7 @@ manifest.webmanifest  PWA metadata (name, icons, colours)
 sw.js                 Service worker that caches files for offline use
 data/terrain.bin      Itacaré elevation grid (512 × 698, int16 decimetres, north row first)
 data/terrain.json     Bounding box, grid size and real-world size of the elevation grid
-data/saopaulo/        The same two files for central São Paulo (640 × 512), plus places.json (curated top picks)
+data/saopaulo/        The same two files for central São Paulo (512 × 434), plus places.json (curated top picks)
 vendor/               three.js r170 and the addons used (map controls, thick lines)
 icons/                App icons
 tools/bake_terrain.py Script that regenerates the terrain files of an area from AWS Terrain Tiles

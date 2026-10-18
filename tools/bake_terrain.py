@@ -27,9 +27,10 @@ from PIL import Image
 AREAS = {
     # Itacaré town + beaches south to Itacarezinho.
     "itacare": dict(west=-39.085, east=-38.960, south=-14.410, north=-14.245, grid_w=512, coast=True, out="data"),
-    # Central São Paulo: Luz / Centro / Paulista / Jardins / Pinheiros / Vila Madalena /
-    # Ibirapuera / Moema / Itaim, west to Lapa and CEAGESP.
-    "saopaulo": dict(west=-46.745, east=-46.595, south=-23.615, north=-23.505, grid_w=640, coast=False, out="data/saopaulo"),
+    # Central São Paulo: the CBD (Luz, Centro, República, Liberdade), Jardins and the
+    # suburbs around it (Higienópolis, Consolação, Bixiga, Paraíso, Vila Mariana,
+    # Itaim, Pinheiros, Vila Madalena) down to Ibirapuera park.
+    "saopaulo": dict(west=-46.705, east=-46.615, south=-23.595, north=-23.525, grid_w=512, coast=False, out="data/saopaulo"),
 }
 AREA = AREAS[sys.argv[1] if len(sys.argv) > 1 else "itacare"]
 WEST, EAST = AREA["west"], AREA["east"]
