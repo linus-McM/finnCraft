@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Bake a heightmap for the Itacaré area into data/terrain.bin + data/terrain.json.
+"""Bake a heightmap for one of the app's areas into data/<area>/terrain.bin + terrain.json
+(the Itacaré area, the default, writes to data/ itself).
 
 Source: AWS Terrain Tiles (Mapzen "terrarium" encoding, public domain-ish
 SRTM/other DEMs). Each PNG pixel encodes elevation as:
@@ -8,23 +9,33 @@ SRTM/other DEMs). Each PNG pixel encodes elevation as:
 The output grid is sampled uniformly in Web Mercator space so it lines up
 exactly with mercator image tiles used for the satellite texture.
 
-Usage:  python3 tools/bake_terrain.py
+Usage:  python3 tools/bake_terrain.py [itacare|saopaulo]
 Requires: Pillow, numpy
 """
 import io
 import json
 import math
 import os
+import sys
 import urllib.request
 
 import numpy as np
 from PIL import Image
 
-# Bounding box: Itacaré town + beaches south to Itacarezinho.
-WEST, EAST = -39.085, -38.960
-SOUTH, NORTH = -14.410, -14.245
-ZOOM = 13  # ~19 m / px at this latitude; close to the source SRTM resolution
-GRID_W = 512  # output samples across (east-west)
+# One entry per area the app offers. `coast` turns on the sea flattening below;
+# `out` is the data folder relative to the repository root.
+AREAS = {
+    # Itacaré town + beaches south to Itacarezinho.
+    "itacare": dict(west=-39.085, east=-38.960, south=-14.410, north=-14.245, grid_w=512, coast=True, out="data"),
+    # Central São Paulo: Luz / Centro / Paulista / Jardins / Pinheiros / Vila Madalena /
+    # Ibirapuera / Moema / Itaim, west to Lapa and CEAGESP.
+    "saopaulo": dict(west=-46.745, east=-46.595, south=-23.615, north=-23.505, grid_w=640, coast=False, out="data/saopaulo"),
+}
+AREA = AREAS[sys.argv[1] if len(sys.argv) > 1 else "itacare"]
+WEST, EAST = AREA["west"], AREA["east"]
+SOUTH, NORTH = AREA["south"], AREA["north"]
+ZOOM = 13  # ~17-19 m / px at these latitudes; close to the source SRTM resolution
+GRID_W = AREA["grid_w"]  # output samples across (east-west)
 
 URL = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -95,12 +106,14 @@ def main():
     fx, fy = gx - x0, gy - y0
     h = (mosaic[y0, x0] * (1 - fx) * (1 - fy) + mosaic[y0, x0 + 1] * fx * (1 - fy)
          + mosaic[y0 + 1, x0] * (1 - fx) * fy + mosaic[y0 + 1, x0 + 1] * fx * fy)
-    h = flatten_ocean(h)
+    if AREA["coast"]:
+        h = flatten_ocean(h)
 
     # Stored as little-endian int16 decimetres, row-major, north row first.
     dm = np.round(h * 10).astype("<i2")
-    os.makedirs(os.path.join(ROOT, "data"), exist_ok=True)
-    dm.tofile(os.path.join(ROOT, "data", "terrain.bin"))
+    out = os.path.join(ROOT, AREA["out"])
+    os.makedirs(out, exist_ok=True)
+    dm.tofile(os.path.join(out, "terrain.bin"))
 
     # Ground size of the area in metres (mercator scale corrected at mid-latitude).
     lat_mid = (NORTH + SOUTH) / 2
@@ -112,7 +125,7 @@ def main():
         "minElevation": float(h.min()), "maxElevation": float(h.max()),
         "source": "AWS Terrain Tiles (terrarium), zoom %d" % ZOOM,
     }
-    with open(os.path.join(ROOT, "data", "terrain.json"), "w") as f:
+    with open(os.path.join(out, "terrain.json"), "w") as f:
         json.dump(meta, f, indent=2)
     print(json.dumps(meta, indent=2))
 

@@ -1,7 +1,7 @@
 {
-  "name": "Itacaré 3D Trails",
-  "short_name": "Itacaré 3D",
-  "description": "3D terrain and trail map of Itacaré, Bahia with live GPS location.",
+  "name": "Itacaré · São Paulo 3D",
+  "short_name": "3D Trails",
+  "description": "3D terrain map of Itacaré (Bahia) and central São Paulo: trails, streets, markets and restaurants with Google ratings, live GPS and routes.",
   "start_url": "./",
   "scope": "./",
   "display": "fullscreen",
@@ -9,7 +9,39 @@
   "background_color": "#0b1d26",
   "theme_color": "#0b1d26",
   "icons": [
-    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
-    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Itacaré",
+      "url": "./?area=itacare",
+      "icons": [
+        {
+          "src": "icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "São Paulo",
+      "url": "./?area=saopaulo",
+      "icons": [
+        {
+          "src": "icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    }
   ]
 }

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<title>Itacaré 3D Trails</title>
-<meta name="description" content="3D terrain and trail map of Itacaré, Bahia with live GPS location.">
+<title>Itacaré · São Paulo 3D</title>
+<meta name="description" content="3D terrain map of Itacaré (Bahia) and central São Paulo: trails, streets, markets, restaurants with Google ratings, live GPS and routes.">
 <meta name="theme-color" content="#0b1d26">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -37,6 +37,8 @@
   .label.beach { color: #ffe39a; }
   .label.place { color: #ffffff; font-size: 13px; }
   .label.poi { color: #9ff0ff; font-weight: 500; }
+  .label.market { color: #ffd34d; font-weight: 700; }
+  .label.pick { text-decoration: underline dotted; }
 
   /* Food & drink markers */
   #venues { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
@@ -48,6 +50,8 @@
     padding: 0 4px; box-shadow: 0 1px 2px rgba(0,0,0,.4); }
   .venue .nm { font-size: 10px; font-weight: 600; color: #fff; text-shadow: 0 1px 2px #000, 0 0 2px #000; white-space: nowrap; }
   .venue.sel .ic { transform: scale(1.3); border-color: #00e5ff; }
+  .venue.pick .ic { box-shadow: 0 0 0 2px #ffd34d, 0 1px 4px rgba(0,0,0,.5); }
+  .notes { margin: 6px 0; font-size: 13px; }
   .stars { color: #ffd34d; letter-spacing: 1px; }
 
   .panel { position: fixed; background: var(--panel); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
@@ -55,6 +59,7 @@
   #top { top: calc(env(safe-area-inset-top) + 10px); left: 10px; right: 10px; padding: 8px 12px;
     display: flex; align-items: center; gap: 10px; }
   #top h1 { font-size: 15px; margin: 0; font-weight: 700; flex: 1; min-width: 0; }
+  #btnArea { flex: none; padding: 5px 9px; font-size: 12px; white-space: nowrap; }
   #top h1 small { display: block; font-weight: 400; color: var(--muted); font-size: 11px; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis; }
   #compass { width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--line); background: rgba(0,0,0,.25);
@@ -134,7 +139,8 @@
 <div id="venues"></div>
 
 <div id="top" class="panel">
-  <h1>Itacaré 3D Trails<small id="status">Loading terrain…</small></h1>
+  <h1><span id="title">Itacaré 3D Trails</span><small id="status">Loading terrain…</small></h1>
+  <button class="pill" id="btnArea" title="Switch area">⇄ Area</button>
   <div id="compass" title="Reset to north">
     <svg viewBox="0 0 24 24"><path d="M12 2 L16 12 L12 10.5 L8 12 Z" fill="#ff5a4f"/><path d="M12 22 L8 12 L12 13.5 L16 12 Z" fill="#cfd8dc"/></svg>
   </div>
@@ -160,7 +166,7 @@
 <div id="toast" class="panel"></div>
 <div id="attrib">Imagery © Esri · Trails © OpenStreetMap contributors · Terrain SRTM</div>
 
-<div id="loading"><div class="box"><div>Building 3D Itacaré…</div><div class="bar"><i id="loadbar"></i></div>
+<div id="loading"><div class="box"><div id="loadtitle">Building 3D terrain…</div><div class="bar"><i id="loadbar"></i></div>
   <div class="small" id="loadmsg" style="margin-top:8px"></div></div></div>
 
 <script type="module">
@@ -176,7 +182,6 @@ import { mergeGeometries } from './vendor/BufferGeometryUtils.js';
 // ---------------------------------------------------------------------------
 // Settings & small helpers
 // ---------------------------------------------------------------------------
-const TOWN = { lat: -14.2786, lon: -38.9964 };       // Itacaré town centre
 const TRAIL_LIFT = 2.5;                               // metres trails float above ground
 const OVERPASS = [
   'https://overpass-api.de/api/interpreter',
@@ -198,6 +203,53 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
 };
 const savedSettings = store.get('itacare.settings', {});
+
+// ---------------------------------------------------------------------------
+// Areas. The whole app is the same for every area; only the terrain file, the
+// OpenStreetMap query, the Google rating search boxes and a few labels change.
+// The chosen area is remembered; ?area=saopaulo in the URL also selects it.
+// ---------------------------------------------------------------------------
+const REGIONS = {
+  itacare: {
+    name: 'Itacaré', title: 'Itacaré 3D Trails', blurb: 'Bahia: beaches, trails, restaurants',
+    data: 'data', coast: true, center: { lat: -14.2786, lon: -38.9964 }, centerName: 'town',
+    searchSuffix: 'Itacaré Bahia', osmCache: 'itacare-osm-v4', ratingsCache: 'itacare-ratings-v1',
+    buildings: true, roads: 'all', routes: true, overpassTimeout: 90,
+    ratingRects: [{ low: { latitude: -14.2960, longitude: -39.0040 }, high: { latitude: -14.2700, longitude: -38.9820 } }],
+    loading: 'Building 3D Itacaré…',
+  },
+  saopaulo: {
+    name: 'São Paulo', title: 'São Paulo 3D', blurb: 'Centro · Paulista · Pinheiros · Ibirapuera: markets, restaurants, sights',
+    data: 'data/saopaulo', coast: false, center: { lat: -23.5505, lon: -46.6333 }, centerName: 'Sé',
+    searchSuffix: 'São Paulo', osmCache: 'saopaulo-osm-v1', ratingsCache: 'saopaulo-ratings-v1',
+    buildings: false, roads: 'streets', routes: false, overpassTimeout: 180, curated: 'data/saopaulo/places.json',
+    // Google Text Search returns at most 60 places per box, so the busy districts are searched separately.
+    ratingRects: [
+      { low: { latitude: -23.5560, longitude: -46.6480 }, high: { latitude: -23.5330, longitude: -46.6250 } },   // Centro / Luz
+      { low: { latitude: -23.5760, longitude: -46.6800 }, high: { latitude: -23.5500, longitude: -46.6400 } },   // Paulista / Jardins / Bixiga
+      { low: { latitude: -23.5760, longitude: -46.7080 }, high: { latitude: -23.5440, longitude: -46.6800 } },   // Pinheiros / Vila Madalena
+      { low: { latitude: -23.6080, longitude: -46.6950 }, high: { latitude: -23.5760, longitude: -46.6350 } },   // Itaim / Ibirapuera / Moema / Vila Mariana
+    ],
+    loading: 'Building 3D São Paulo…',
+  },
+};
+const REGION_ID = (() => {
+  const q = new URLSearchParams(location.search).get('area');
+  const id = q && REGIONS[q] ? q : store.get('itacare.area', 'itacare');
+  return REGIONS[id] ? id : 'itacare';
+})();
+const REGION = REGIONS[REGION_ID];
+store.set('itacare.area', REGION_ID);
+const TOWN = REGION.center;
+function switchArea(id) {
+  if (id === REGION_ID) return;
+  store.set('itacare.area', id);
+  location.href = location.pathname + (id === 'itacare' ? '' : '?area=' + id);
+}
+document.title = REGION.title;
+$('title').textContent = REGION.title;
+$('loadtitle').textContent = REGION.loading;
+$('btnArea').textContent = '⇄ ' + Object.values(REGIONS).find((r) => r !== REGION).name;
 const BUILT_IN_KEY = (window.ITACARE_CONFIG && window.ITACARE_CONFIG.googleKey) || '';
 const settings = Object.assign({ layer: 'satellite', imagery: 'esri', hires: true, exaggeration: 1.5, minRating: 0, googleKey: '', routeMode: 'moped' }, savedSettings, {
   show: Object.assign({ route: true, path: true, track: true, steps: true, road: true, labels: true,
@@ -322,9 +374,9 @@ const CHUNK_VERTS = 40;           // vertices per chunk edge (~1 km at 26 m spac
 const chunks = [];                // { mesh, i, j, x0, x1, z0, z1, u0, u1, v0, v1, detail:{key,tex} }
 
 async function loadTerrain() {
-  T = await (await fetch('data/terrain.json')).json();
+  T = await (await fetch(`${REGION.data}/terrain.json`)).json();
   MX0 = mercX(T.west); MX1 = mercX(T.east); MY0 = mercY(T.north); MY1 = mercY(T.south);
-  const raw = new Int16Array(await (await fetch('data/terrain.bin')).arrayBuffer());
+  const raw = new Int16Array(await (await fetch(`${REGION.data}/terrain.bin`)).arrayBuffer());
   heights = new Float32Array(raw.length);
   for (let i = 0; i < raw.length; i++) heights[i] = raw[i] / 10;
 
@@ -371,6 +423,7 @@ async function loadTerrain() {
     new THREE.PlaneGeometry(T.sizeX * 4, T.sizeZ * 4).rotateX(-Math.PI / 2),
     new THREE.MeshStandardMaterial({ color: 0x1f6f8b, roughness: 0.25, metalness: 0.1, transparent: true, opacity: 0.88 }));
   waterMesh.position.y = -0.3;
+  waterMesh.visible = REGION.coast;   // inland areas (São Paulo sits at ~750 m) have no sea
   world.add(waterMesh);
 }
 
@@ -401,8 +454,11 @@ function makeTopoTexture() {
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     hs[y * W + x] = heightAt((x / (W - 1) - 0.5) * T.sizeX, (y / (H - 1) - 0.5) * T.sizeZ);
   }
+  // Hypsometric tint relative to sea level on the coast, or to the lowest point inland.
+  const base = REGION.coast ? 0 : Math.floor(T.minElevation / 10) * 10;
   const ramp = [[0, [196, 214, 160]], [20, [150, 190, 120]], [60, [104, 160, 92]], [120, [150, 150, 96]], [200, [190, 160, 120]], [300, [235, 225, 210]]];
-  const tint = (h) => {
+  const tint = (h0) => {
+    const h = h0 - base;
     for (let i = 1; i < ramp.length; i++) if (h <= ramp[i][0]) {
       const [h0, c0] = ramp[i - 1], [h1, c1] = ramp[i], t = (h - h0) / (h1 - h0);
       return c0.map((v, k) => v + (c1[k] - v) * t);
@@ -412,7 +468,7 @@ function makeTopoTexture() {
   const lx = -0.6, ly = 0.6, lz = -0.5; // light direction for hillshade
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
     const i = y * W + x, h = hs[i], o = i * 4;
-    if (h < 0) { img.data[o] = 31; img.data[o + 1] = 111; img.data[o + 2] = 139; img.data[o + 3] = 255; continue; }
+    if (REGION.coast && h < 0) { img.data[o] = 31; img.data[o + 1] = 111; img.data[o + 2] = 139; img.data[o + 3] = 255; continue; }
     const hl = hs[y * W + Math.max(x - 1, 0)], hr = hs[y * W + Math.min(x + 1, W - 1)];
     const hu = hs[Math.max(y - 1, 0) * W + x], hd = hs[Math.min(y + 1, H - 1) * W + x];
     const dx = (hr - hl) / (2 * cellX / S) * 2, dz = (hd - hu) / (2 * cellZ / S) * 2;
@@ -671,21 +727,29 @@ function classify(tags) {
 
 function overpassQuery() {
   const b = `${T.south},${T.west},${T.north},${T.east}`;
-  return `[out:json][timeout:90];
+  // A dense city needs a leaner query than a beach town: no service roads,
+  // sidewalks, crossings or building footprints (hundreds of thousands in São Paulo).
+  const ways = REGION.roads === 'all'
+    ? `way["highway"~"^(path|footway|track|bridleway|steps|cycleway|pedestrian)$"](${b});
+  way["highway"~"^(primary|secondary|tertiary|unclassified|residential|living_street|service)$"](${b});`
+    : `way["highway"~"^(trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street|pedestrian|cycleway|steps|path|bridleway)$"]["area"!="yes"](${b});
+  way["highway"="footway"]["footway"!~"^(sidewalk|crossing)$"](${b});`;
+  return `[out:json][timeout:${REGION.overpassTimeout}][maxsize:536870912];
 (
-  way["highway"~"^(path|footway|track|bridleway|steps|cycleway|pedestrian)$"](${b});
-  way["highway"~"^(primary|secondary|tertiary|unclassified|residential|living_street|service)$"](${b});
-  relation["route"~"^(hiking|foot|walking)$"](${b});
-  way["building"](${b});
+  ${ways}
+  ${REGION.routes ? `relation["route"~"^(hiking|foot|walking)$"](${b});` : ''}
+  ${REGION.buildings ? `way["building"](${b});` : ''}
 );
 out geom;
 (
   nwr["natural"="beach"]["name"](${b});
-  nwr["place"~"^(town|village|hamlet|suburb|neighbourhood)$"]["name"](${b});
+  nwr["place"~"^(town|village|hamlet|suburb|neighbourhood|quarter)$"]["name"](${b});
   nwr["natural"~"^(peak|bay|cape)$"]["name"](${b});
   nwr["waterway"="waterfall"](${b});
   node["tourism"="viewpoint"](${b});
-  nwr["tourism"~"^(attraction|museum|artwork|picnic_site)$"]["name"](${b});
+  nwr["tourism"~"^(attraction|museum${REGION.roads === 'all' ? '|artwork|picnic_site' : ''})$"]["name"](${b});
+  nwr["amenity"="marketplace"]["name"](${b});
+  nwr["leisure"="park"]["name"](${b});
   nwr["sport"="surfing"]["name"](${b});
   nwr["amenity"~"^(restaurant|fast_food|bar|pub|biergarten|cafe|ice_cream)$"](${b});
 );
@@ -707,7 +771,7 @@ async function fetchOSM() {
 }
 
 // Trail data is cached with the Cache API (it can be several MB — too big for localStorage).
-const OSM_CACHE = 'itacare-osm-v4', OSM_KEY = 'osm-data.json';
+const OSM_CACHE = REGION.osmCache, OSM_KEY = 'osm-data.json';
 async function cachedOSM() {
   try { const r = await (await caches.open(OSM_CACHE)).match(OSM_KEY); return r ? await r.json() : null; } catch { return null; }
 }
@@ -777,6 +841,7 @@ function buildTrails(osm) {
   // Beaches are often mapped several times (polygon + node); keep one per name and kind.
   const seen = new Set();
   pois = pois.filter((p) => { const k = p.kind + '|' + p.name; if (seen.has(k)) return false; seen.add(k); return true; });
+  mergeCurated();
   for (const t of trails) {
     t.pts = densify(t.latlon);
     t.length = 0;
@@ -807,6 +872,29 @@ function buildTrails(osm) {
   if (nav.dest && gps.fix) computeRoute(false);
 }
 
+// Curated "top picks" for the area (data/<area>/places.json): markets, restaurants,
+// bars, cafés and sights with a note on what to eat or why to go. Each one is
+// attached to the matching OpenStreetMap venue or place, or added as its own marker.
+let curated = [];
+function mergeCurated() {
+  for (const c of curated) {
+    if (!inBounds(c.lat, c.lon)) continue;
+    if (VENUE_GROUPS[c.group]) {
+      let match = null, best = 250;
+      for (const v of venues) { if (v.source || !sameName(v.name, c.name)) continue; const d = haversine(v, c); if (d < best) { best = d; match = v; } }
+      if (match) match.pick = c;
+      else venues.push({ id: 'c' + c.id, name: c.name, group: c.group, icon: { bar: '🍹', cafe: '☕' }[c.group] || '🍽️', kind: c.kind,
+        lat: c.lat, lon: c.lon, tags: c.hours ? { opening_hours: c.hours } : {}, source: 'curated', pick: c });
+    } else {
+      const kind = c.group === 'market' ? 'market' : 'attraction';
+      let match = null, best = 300;
+      for (const p of pois) { if (!sameName(p.name, c.name)) continue; const d = haversine(p, c); if (d < best) { best = d; match = p; } }
+      if (match) { match.pick = c; match.rank = Math.min(match.rank, 1); }
+      else pois.push({ id: 'c' + c.id, name: c.name, kind, group: PLACE_KINDS[kind].group, lat: c.lat, lon: c.lon, rank: 1, pick: c });
+    }
+  }
+}
+
 function applyVisibility() {
   for (const [cat, l] of Object.entries(trailLayers)) l.visible = settings.show[cat];
   $('labels').style.display = settings.show.labels ? '' : 'none';
@@ -822,7 +910,8 @@ function buildLabels() {
   pois.sort((a, b) => a.rank - b.rank);
   for (const p of pois) {
     const el = document.createElement('div');
-    el.className = 'label ' + (p.kind === 'beach' ? 'beach' : p.group === 'town' ? 'place' : 'poi'); el.textContent = p.name;
+    el.className = 'label ' + (p.kind === 'beach' ? 'beach' : p.group === 'town' ? 'place' : p.group === 'market' ? 'market' : 'poi') + (p.pick ? ' pick' : '');
+    el.textContent = p.name;
     el.addEventListener('click', (e) => { e.stopPropagation(); selectPlace(p); });
     root.appendChild(el);
     const l = toLocal(p.lat, p.lon);
@@ -875,7 +964,7 @@ let googlePlaces = null;  // last Google Places result (cached)
 let selectedVenue = null;
 
 const venueVisible = (v) => settings.show[v.group]
-  && (!settings.minRating || (v.rating != null && v.rating >= settings.minRating));
+  && (!settings.minRating || v.pick || (v.rating != null && v.rating >= settings.minRating));
 
 function buildVenueMarkers() {
   const root = $('venues'); root.innerHTML = ''; venueEls = [];
@@ -883,7 +972,7 @@ function buildVenueMarkers() {
   const sorted = venues.slice().sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0) || (b.ratingCount ?? 0) - (a.ratingCount ?? 0));
   for (const v of sorted) {
     const el = document.createElement('div');
-    el.className = 'venue';
+    el.className = 'venue' + (v.pick ? ' pick' : '');
     el.style.setProperty('--c', VENUE_GROUPS[v.group].color);
     el.innerHTML = `<span class="ic">${v.icon}</span>${v.rating != null ? `<span class="rt" style="--rc:${reviewColor(v.ratingCount)}">${v.rating.toFixed(1)}</span>` : ''}<span class="nm"></span>`;
     el.querySelector('.nm').textContent = v.name;
@@ -944,7 +1033,7 @@ function reviewColor(n) {
 }
 const ratingBadge = (v) => `<span class="rbadge" style="--rc:${reviewColor(v.ratingCount)}" title="${v.ratingCount ?? 0} Google reviews">${v.rating.toFixed(1)}</span>`;
 // Google's own listing (business profile with reviews, photos, hours) in a new tab.
-const googleListingUrl = (v) => `https://www.google.com/search?q=${encodeURIComponent(v.name + ' Itacaré Bahia')}`;
+const googleListingUrl = (v) => `https://www.google.com/search?q=${encodeURIComponent(v.name + ' ' + REGION.searchSuffix)}`;
 
 function selectVenue(v) {
   selectedVenue = v;
@@ -954,16 +1043,17 @@ function selectVenue(v) {
   const website = t.website || t['contact:website'];
   const phone = t.phone || t['contact:phone'];
   const insta = t['contact:instagram'];
-  const mapsUrl = v.gUri || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(v.name + ' Itacaré')}`;
+  const mapsUrl = v.gUri || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(v.name + ' ' + REGION.searchSuffix)}`;
   const ratingHtml = v.rating != null
     ? `<div class="row">${ratingBadge(v)}<span class="stars">${stars(v.rating)}</span><span class="small" style="color:${reviewColor(v.ratingCount)}">${v.ratingCount ?? 0} Google reviews</span>${v.price ? `<span class="small">· ${v.price}</span>` : ''}</div>`
     : `<div class="small" style="margin:6px 0">No rating yet${googleKey() ? '' : ' — add a Google API key in Layers to load ratings'}.</div>`;
   openSheet(`<h2>${v.icon} ${escapeHtml(v.name)}</h2>
     <div class="sub">${escapeHtml(v.kind)}${cuisine ? ' · ' + escapeHtml(cuisine) : ''}${v.openNow != null ? (v.openNow ? ' · <b style="color:#5be38a">Open now</b>' : ' · <b style="color:#ff8a8a">Closed now</b>') : ''}</div>
     ${ratingHtml}
+    ${v.pick ? `<div class="notes">⭐ <b>Top pick</b> · ${escapeHtml(v.pick.area)}<br>${escapeHtml(v.pick.notes || '')}</div>` : ''}
     <div class="stats">
       ${gps.fix ? `<div class="stat"><b>${fmtKm(haversine(gps.fix, v))}</b><span>from you</span></div>` : ''}
-      <div class="stat"><b>${fmtKm(haversine(TOWN, v))}</b><span>from town</span></div>
+      <div class="stat"><b>${fmtKm(haversine(TOWN, v))}</b><span>from ${REGION.centerName}</span></div>
       <div class="stat"><b>${Math.round(Math.max(heightAt(l.x, l.z), 0))} m</b><span>elevation</span></div>
     </div>
     ${t.opening_hours ? `<div class="small">Hours: ${escapeHtml(t.opening_hours)}</div>` : ''}
@@ -975,22 +1065,19 @@ function selectVenue(v) {
       ${website ? `<a class="pill" target="_blank" rel="noopener" href="${escapeHtml(website)}">Website ↗</a>` : ''}
       ${insta ? `<a class="pill" target="_blank" rel="noopener" href="${escapeHtml(insta.startsWith('http') ? insta : 'https://instagram.com/' + insta.replace('@', ''))}">Instagram ↗</a>` : ''}
     </div>
-    <div class="small">${v.source === 'google' ? 'Listing from Google Places.' : 'Listing © OpenStreetMap contributors.'}${v.rating != null ? ' Rating from Google.' : ''}</div>`);
+    <div class="small">${v.source === 'google' ? 'Listing from Google Places.' : v.source === 'curated' ? 'Curated pick.' : 'Listing © OpenStreetMap contributors.'}${v.rating != null ? ' Rating from Google.' : ''}</div>`);
   bindRouteButtons(v);
   flyTo(l.x, l.z, Math.min(camera.position.distanceTo(controls.target), 900));
 }
 
 // --- Google Places ratings -------------------------------------------------
-const RATINGS_CACHE = 'itacare-ratings-v1', RATINGS_KEY = 'google-places.json';
+const RATINGS_CACHE = REGION.ratingsCache, RATINGS_KEY = 'google-places.json';
 const RATINGS_MAX_AGE = 7 * 24 * 3600 * 1000;  // refetch weekly at most
 
 async function fetchGooglePlaces(key) {
-  // Text Search returns at most 60 results per query (3 pages of 20), so search
-  // the busy town centre separately from the whole map area.
-  const regions = [
-    { low: { latitude: -14.2960, longitude: -39.0040 }, high: { latitude: -14.2700, longitude: -38.9820 } },
-    { low: { latitude: T.south, longitude: T.west }, high: { latitude: T.north, longitude: T.east } },
-  ];
+  // Text Search returns at most 60 results per query (3 pages of 20), so the busy
+  // districts are searched separately from the whole map area.
+  const regions = [...REGION.ratingRects, { low: { latitude: T.south, longitude: T.west }, high: { latitude: T.north, longitude: T.east } }];
   const queries = [['restaurant', 'restaurants'], ['bar', 'bars'], ['cafe', 'cafes and coffee']];
   const found = new Map();
   for (const rect of regions) for (const [type, text] of queries) {
@@ -1048,7 +1135,7 @@ function applyRatings() {
       const name = p.displayName?.text || 'Unnamed';
       let match = null, best = 100;
       for (const v of venues) {
-        if (v.rating != null || v.source === 'google' || !v.tags?.name || !sameName(v.name, name)) continue;
+        if (v.rating != null || v.source === 'google' || !(v.tags?.name || v.source === 'curated') || !sameName(v.name, name)) continue;
         const d = haversine(v, { lat, lon });
         if (d < best) { best = d; match = v; }
       }
@@ -1107,11 +1194,16 @@ const PLACE_KINDS = {
   artwork:   { icon: '🎨', label: 'Artwork', group: 'sight' },
   picnic:    { icon: '🧺', label: 'Picnic site', group: 'sight' },
   surf:      { icon: '🏄', label: 'Surf spot', group: 'beach' },
+  market:    { icon: '🧺', label: 'Market', group: 'market' },
+  park:      { icon: '🌳', label: 'Park', group: 'sight' },
 };
-const PLACE_GROUPS = { beach: 'Beaches', sight: 'Sights', town: 'Towns' };
+const PLACE_GROUPS = { market: 'Markets', beach: 'Beaches', sight: 'Sights', town: 'Towns' };
 
 function placeKind(t) {
   if (t.natural === 'beach') return 'beach';
+  if (t.amenity === 'marketplace') return 'market';
+  if (t.leisure === 'park') return 'park';
+  if (t.place === 'quarter') return 'suburb';
   if (t.place && PLACE_KINDS[t.place]) return t.place;
   if (t.place === 'neighbourhood') return 'suburb';
   if (t.waterway === 'waterfall') return 'waterfall';
@@ -1126,14 +1218,15 @@ function placeKind(t) {
 function selectPlace(p) {
   const l = toLocal(p.lat, p.lon);
   const k = PLACE_KINDS[p.kind];
-  openSheet(`<h2>${k.icon} ${escapeHtml(p.name)}</h2><div class="sub">${k.label}</div>
+  openSheet(`<h2>${k.icon} ${escapeHtml(p.name)}</h2><div class="sub">${p.pick ? escapeHtml(p.pick.kind) + ' · ' + escapeHtml(p.pick.area) : k.label}</div>
+    ${p.pick ? `<div class="notes">⭐ <b>Top pick</b><br>${escapeHtml(p.pick.notes || '')}</div>${p.pick.hours ? `<div class="small">Hours: ${escapeHtml(p.pick.hours)}</div>` : ''}` : ''}
     <div class="stats">
       ${gps.fix ? `<div class="stat"><b>${fmtKm(haversine(gps.fix, p))}</b><span>from you</span></div>` : ''}
-      <div class="stat"><b>${fmtKm(haversine(TOWN, p))}</b><span>from town</span></div>
+      <div class="stat"><b>${fmtKm(haversine(TOWN, p))}</b><span>from ${REGION.centerName}</span></div>
       <div class="stat"><b>${Math.round(Math.max(heightAt(l.x, l.z), 0))} m</b><span>elevation</span></div>
     </div>
     ${routeButtons(p)}
-    <div class="small">© OpenStreetMap contributors.</div>`);
+    <div class="small">${p.pick && String(p.id).startsWith('c') ? 'Curated pick.' : '© OpenStreetMap contributors.'}</div>`);
   bindRouteButtons(p);
   flyTo(l.x, l.z, Math.min(camera.position.distanceTo(controls.target), 1500));
 }
@@ -1165,6 +1258,7 @@ function modeFactor(t, mode) {
   const yes = (v) => v === 'yes' || v === 'designated' || v === 'permissive';
   if (mode === 'walk') {
     if (no(g.foot) || (no(g.access) && !yes(g.foot))) return null;
+    if ((h === 'motorway' || h === 'motorway_link' || h === 'trunk' || h === 'trunk_link') && !yes(g.foot)) return null;
     return h === 'steps' ? 1.3 : 1;
   }
   // Moped / e-bike: legal for motor vehicles or bicycles, and physically rideable.
@@ -1177,7 +1271,7 @@ function modeFactor(t, mode) {
   if (h === 'path' || h === 'bridleway') return (explicit || yes(g.bicycle)) ? 1.8 : null;
   if (h === 'cycleway') return g.bicycle === 'no' ? null : 1.1;
   if (h === 'track') return g.tracktype === 'grade5' ? 2.2 : 1.4;
-  if (h === 'motorway' || h === 'motorway_link' || h === 'trunk') return null;
+  if (h === 'motorway' || h === 'motorway_link' || h === 'trunk' || h === 'trunk_link') return null;
   return 1;
 }
 
@@ -1469,8 +1563,8 @@ function onPosition(pos) {
   if (!inBounds(lat, lon)) {
     meGroup.visible = false;
     const d = haversine({ lat, lon }, TOWN);
-    setStatus(`You are ${fmtKm(d)} from Itacaré, outside the map`);
-    if (first) toast(`You're outside the map area (${fmtKm(d)} from Itacaré). Your dot will appear once you're in range.`, 6000);
+    setStatus(`You are ${fmtKm(d)} from ${REGION.name}, outside the map`);
+    if (first) toast(`You're outside the map area (${fmtKm(d)} from ${REGION.name}). Your dot will appear once you're in range.`, 6000);
     return;
   }
   meGroup.visible = true;
@@ -1569,13 +1663,13 @@ function exportGpx() {
   const pts = gps.track.map((p) => `      <trkpt lat="${p.lat}" lon="${p.lon}">${p.ele != null ? `<ele>${p.ele.toFixed(1)}</ele>` : ''}<time>${new Date(p.t).toISOString()}</time></trkpt>`).join('\n');
   const gpx = `<?xml version="1.0" encoding="UTF-8"?>
 <gpx version="1.1" creator="Itacare 3D Trails" xmlns="http://www.topografix.com/GPX/1/1">
-  <trk><name>Itacaré track ${new Date().toISOString().slice(0, 10)}</name><trkseg>
+  <trk><name>${REGION.name} track ${new Date().toISOString().slice(0, 10)}</name><trkseg>
 ${pts}
   </trkseg></trk>
 </gpx>`;
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([gpx], { type: 'application/gpx+xml' }));
-  a.download = `itacare-track-${Date.now()}.gpx`;
+  a.download = `${REGION_ID}-track-${Date.now()}.gpx`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 5000);
 }
@@ -1791,6 +1885,8 @@ $('sheetClose').addEventListener('click', closeSheet);
 $('btnLayers').addEventListener('click', () => {
   const hex = (c) => '#' + c.toString(16).padStart(6, '0');
   openSheet(`<h2>Map layers</h2>
+    <div class="row"><span>Area</span><div class="seg" id="segArea">
+      ${Object.entries(REGIONS).map(([k, r]) => `<button data-v="${k}" class="${k === REGION_ID ? 'on' : ''}">${r.name}</button>`).join('')}</div></div>
     <div class="row"><div class="seg" id="segLayer">
       <button data-v="satellite" class="${settings.layer === 'satellite' ? 'on' : ''}">Satellite</button>
       <button data-v="topo" class="${settings.layer === 'topo' ? 'on' : ''}">Topo / contours</button></div></div>
@@ -1798,8 +1894,8 @@ $('btnLayers').addEventListener('click', () => {
       <button data-v="esri" class="${settings.imagery === 'esri' ? 'on' : ''}">Esri</button>
       <button data-v="google" class="${settings.imagery === 'google' ? 'on' : ''}">Google</button></div></div>
     <div class="row"><label><input type="checkbox" data-k="hires" ${settings.hires ? 'checked' : ''}>Sharp imagery near the camera (uses more data)</label></div>
-    <div class="row"><label><input type="checkbox" data-k="buildings" ${settings.show.buildings ? 'checked' : ''}>
-      <span style="display:inline-block;width:10px;height:10px;background:#f2e9dc;border:1px solid #999"></span>3D buildings (OpenStreetMap)</label></div>
+    ${REGION.buildings ? `<div class="row"><label><input type="checkbox" data-k="buildings" ${settings.show.buildings ? 'checked' : ''}>
+      <span style="display:inline-block;width:10px;height:10px;background:#f2e9dc;border:1px solid #999"></span>3D buildings (OpenStreetMap)</label></div>` : ''}
     <div class="row"><span>Routing</span><div class="seg" id="segMode">
       ${Object.entries(ROUTE_MODES).map(([k, m]) => `<button data-v="${k}" class="${settings.routeMode === k ? 'on' : ''}">${m.icon} ${m.label}</button>`).join('')}</div></div>
     <div class="small">Moped / e-bike routes use roads, streets, dirt tracks and cycleways, plus paths that OpenStreetMap marks as open to
@@ -1822,6 +1918,7 @@ $('btnLayers').addEventListener('click', () => {
     <div class="row"><button class="pill" id="saveKey">Save &amp; load ratings</button>${settings.googleKey ? '<button class="pill" id="clearKey">Remove key</button>' : ''}</div>
     <div class="small">Terrain: SRTM via AWS Terrain Tiles. Imagery: Esri World Imagery or Google (Map Tiles API). Trails and buildings: © OpenStreetMap contributors (ODbL).
     Contours every 10 m, bold every 50 m.</div>`);
+  $('segArea').addEventListener('click', (e) => { const v = e.target.dataset.v; if (v) switchArea(v); });
   $('segLayer').addEventListener('click', (e) => {
     const v = e.target.dataset.v; if (!v) return;
     if (v === 'satellite' && !baseTexture) toast('Satellite imagery is still loading or unavailable offline.');
@@ -1874,6 +1971,14 @@ $('btnLayers').addEventListener('click', () => {
   });
 });
 
+$('btnArea').addEventListener('click', () => {
+  openSheet(`<h2>Choose an area</h2><ul class="list" id="areas">
+    ${Object.entries(REGIONS).map(([k, r]) => `<li data-v="${k}"><span>${k === REGION_ID ? '✅' : k === 'itacare' ? '🏝️' : '🏙️'}</span>
+      <span class="nm"><b>${r.name}</b><br><span class="small">${escapeHtml(r.blurb)}</span></span></li>`).join('')}</ul>
+    <div class="small" style="margin-top:6px">Switching reloads the app for that area. Each area keeps its own cached map data and ratings.</div>`);
+  $('areas').addEventListener('click', (e) => { const li = e.target.closest('li'); if (li) switchArea(li.dataset.v); });
+});
+
 let listTab = 'places';
 const showList = { trails: () => showTrailList(), food: () => showFoodList(), places: () => showPlacesList() };
 $('btnTrails').addEventListener('click', () => showList[listTab]());
@@ -1897,12 +2002,12 @@ function showPlacesList() {
   const render = () => {
     const q = $('q').value.toLowerCase();
     return items.filter((p) => (group === 'all' || p.group === group) && (!q || p.name.toLowerCase().includes(q))).slice(0, 300).map((p) =>
-      `<li data-i="${items.indexOf(p)}"><span>${PLACE_KINDS[p.kind].icon}</span><span class="nm">${escapeHtml(p.name)}<br><span class="small">${PLACE_KINDS[p.kind].label}</span></span>`
+      `<li data-i="${items.indexOf(p)}"><span>${PLACE_KINDS[p.kind].icon}</span><span class="nm">${p.pick ? '⭐ ' : ''}${escapeHtml(p.name)}<br><span class="small">${p.pick ? escapeHtml(p.pick.kind + ' · ' + p.pick.area) : PLACE_KINDS[p.kind].label}</span></span>`
       + `<span class="km">${gps.fix ? fmtKm(haversine(gps.fix, p)) : ''}</span><button class="pill go" data-go="${items.indexOf(p)}" title="Route here">🧭</button></li>`).join('');
   };
   openSheet(`${listTabs('places')}<div class="row"><div class="seg" id="grp"><button data-v="all" class="on">All</button>
     ${Object.entries(PLACE_GROUPS).map(([k, g]) => `<button data-v="${k}">${g}</button>`).join('')}</div></div>
-    <input type="search" id="q" placeholder="Search beaches, sights, towns…"><ul class="list" id="tl"></ul>
+    <input type="search" id="q" placeholder="${REGION.coast ? 'Search beaches, sights, towns…' : 'Search markets, sights, neighbourhoods…'}"><ul class="list" id="tl"></ul>
     ${gps.fix ? '' : '<div class="small" style="margin-top:6px">Turn on location (bottom-right button) to sort by distance and route from where you are.</div>'}`);
   bindListTabs();
   $('tl').innerHTML = render();
@@ -1926,12 +2031,13 @@ function showFoodList() {
     || a.name.localeCompare(b.name));
   const render = () => {
     const q = $('q').value.toLowerCase();
-    return items.filter((v) => (group === 'all' || v.group === group) && (!q || v.name.toLowerCase().includes(q)
-      || (v.tags?.cuisine || '').toLowerCase().includes(q))).slice(0, 300).map((v) =>
-      `<li data-i="${items.indexOf(v)}"><span>${v.icon}</span><span class="nm">${escapeHtml(v.name)}</span>`
+    return items.filter((v) => (group === 'all' || (group === 'pick' ? v.pick : v.group === group)) && (!q || v.name.toLowerCase().includes(q)
+      || (v.tags?.cuisine || '').toLowerCase().includes(q) || (v.pick && (v.pick.kind + ' ' + v.pick.area).toLowerCase().includes(q)))).slice(0, 300).map((v) =>
+      `<li data-i="${items.indexOf(v)}"><span>${v.icon}</span><span class="nm">${v.pick ? '⭐ ' : ''}${escapeHtml(v.name)}${v.pick ? `<br><span class="small">${escapeHtml(v.pick.kind)} · ${escapeHtml(v.pick.area)}</span>` : ''}</span>`
       + `<span class="km">${v.rating != null ? ratingBadge(v) + ' ' : ''}${gps.fix ? fmtKm(haversine(gps.fix, v)) : ''}</span><button class="pill go" data-go="${items.indexOf(v)}" title="Route here">🧭</button></li>`).join('');
   };
   openSheet(`${listTabs('food')}<div class="row"><div class="seg" id="grp"><button data-v="all" class="on">All</button>
+    ${curated.length ? '<button data-v="pick">⭐ Picks</button>' : ''}
     ${Object.entries(VENUE_GROUPS).map(([k, g]) => `<button data-v="${k}">${g.label}</button>`).join('')}</div></div>
     <input type="search" id="q" placeholder="Search name or cuisine…"><ul class="list" id="tl"></ul>
     ${googleKey() ? '' : '<div class="small" style="margin-top:6px">Tip: add a Google API key in Layers to see ratings.</div>'}`);
@@ -1983,7 +2089,7 @@ function showTrackSheet() {
 // ---------------------------------------------------------------------------
 // Loading sequence
 // ---------------------------------------------------------------------------
-const trailSummary = () => `${trails.filter((t) => t.cat !== 'road').length} trail segments · tap a trail for details`;
+const trailSummary = () => `${trails.filter((t) => t.cat !== 'road').length} ${REGION.roads === 'all' ? 'trail' : 'path'} segments · ${venues.length} places to eat & drink`;
 
 async function loadTrails(force = false) {
   if (!gps.fix) setStatus('Loading trails from OpenStreetMap…');
@@ -1995,10 +2101,11 @@ async function loadTrails(force = false) {
     }
     buildTrails(osm);
     if (!gps.fix) setStatus(trailSummary());
-    if (force) toast('Trail data refreshed.');
+    if (force) toast('Map data refreshed.');
   } catch (e) {
     console.warn(e);
-    if (!gps.fix) setStatus('Trails unavailable (offline?) — terrain only');
+    if (curated.length && !trails.length) buildTrails({ elements: [] });   // still show the curated picks
+    if (!gps.fix) setStatus('Streets unavailable (offline?) — terrain only');
     toast('Could not load trails from OpenStreetMap. They will load next time you are online.', 5000);
   }
 }
@@ -2029,8 +2136,12 @@ async function main() {
   applyExaggeration();
   progress(0.5, 'Placing camera…');
   const town = toLocal(TOWN.lat, TOWN.lon);
-  controls.target.set(town.x, 0, town.z + 1500);
-  camera.position.set(town.x + 2500, 3200, town.z + 6500);
+  const ground = heightAt(town.x, town.z) * settings.exaggeration;
+  controls.target.set(town.x, ground, town.z + 1500);
+  camera.position.set(town.x + 2500, ground + 3200, town.z + 6500);
+  if (REGION.curated) {
+    try { curated = (await (await fetch(REGION.curated)).json()).places; } catch (e) { console.warn('curated picks', e); }
+  }
   controls.update();
   drawTrack();
   animate();

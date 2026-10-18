@@ -1,8 +1,8 @@
 // Service worker: makes the app installable and usable offline.
-// - App shell + terrain data are pre-cached on install.
+// - App shell + terrain data for every area are pre-cached on install.
 // - Satellite tiles are cached the first time they are fetched (cache-first).
 // - Trail data is cached by the page itself (Cache API, see index.html).
-const VERSION = 'v8';
+const VERSION = 'v9';
 const SHELL = `itacare-shell-${VERSION}`;
 const TILES = 'itacare-tiles-v1';
 
@@ -15,6 +15,9 @@ const SHELL_FILES = [
   './icons/icon-512.png',
   './data/terrain.json',
   './data/terrain.bin',
+  './data/saopaulo/terrain.json',
+  './data/saopaulo/terrain.bin',
+  './data/saopaulo/places.json',
   './vendor/three.module.min.js',
   './vendor/OrbitControls.js',
   './vendor/MapControls.js',

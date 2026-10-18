@@ -33,12 +33,29 @@ Built with plain HTML + JavaScript and [three.js](https://threejs.org). No build
 - **Works offline after the first visit**: the app, terrain and trail data are cached, and so are the satellite tiles you have loaded.
   You can install it to your home screen.
 
-## São Paulo companion app
+## Two areas: Itacaré and São Paulo
 
-The repository also contains **São Paulo Eats & Markets** in [`saopaulo/`](saopaulo/README.md): a 2D Leaflet PWA with the
-city's key markets, restaurants, bars, cafés and sights, rated the same way as the restaurants here (Google rating, review
-count, badge colour by review-count rank), with live GPS and street-network routes from where you are. It deploys with this
-app to `https://<user>.github.io/<repo>/saopaulo/` and shares the Google key injected into `config.js`.
+The same app covers two areas. Tap **⇄ São Paulo** / **⇄ Itacaré** in the title bar (or **Layers → Area**) to switch;
+the choice is remembered, and `?area=saopaulo` in the URL selects it directly (the installed app also offers both as
+home-screen shortcuts). Everything works the same way in both: 3D terrain, OpenStreetMap streets and paths, restaurants,
+bars and cafés with Google ratings, live GPS, and routes from your position.
+
+The São Paulo area covers the centre of the city (about 15 × 12 km: Luz, Centro, Paulista, Jardins, Pinheiros,
+Vila Madalena, Itaim, Ibirapuera, Moema, Vila Mariana, Barra Funda and Lapa, west to CEAGESP). Differences from Itacaré:
+
+- **Data points**: besides restaurants, bars and cafés it loads **markets** (`amenity=marketplace`), **parks**, museums,
+  attractions, viewpoints and neighbourhood names from OpenStreetMap, and a curated list of **top picks**
+  (`data/saopaulo/places.json`: 14 markets and fairs, 31 restaurants, 9 bars, 5 cafés, 11 sights, each with a note on what
+  to eat or why to go and the neighbourhood). Picks are marked ⭐, have their own **Picks** filter in the Food & drink list,
+  and are matched to the OpenStreetMap listing when one exists.
+- **Lean map data**: no 3D buildings, service roads, sidewalks or crossings (São Paulo has hundreds of thousands of each);
+  trunk roads are shown but never used for walking routes.
+- **Ratings**: Google Text Search is run over four busy districts plus the whole area, so the best-known places are rated;
+  the badge colour still ranks review counts among all rated places on the map.
+- **Terrain**: the city sits at 700–870 m, so the topo tint and contours are relative to the lowest point, and there is no sea.
+
+Picks outside the area box (Mocotó in Vila Medeiros, Mercado de Santo Amaro) are not shown. Pick coordinates were entered
+by hand and are approximate until a Google key snaps them to the real listing.
 
 ## Controls
 
@@ -92,11 +109,12 @@ Google ratings are matched to OpenStreetMap venues by name and location. Places 
 index.html            The whole app: HTML, CSS and JavaScript (three.js scene, GPS, UI)
 manifest.webmanifest  PWA metadata (name, icons, colours)
 sw.js                 Service worker that caches files for offline use
-data/terrain.bin      Elevation grid (512 × 698, int16 decimetres, north row first)
+data/terrain.bin      Itacaré elevation grid (512 × 698, int16 decimetres, north row first)
 data/terrain.json     Bounding box, grid size and real-world size of the elevation grid
+data/saopaulo/        The same two files for central São Paulo (640 × 512), plus places.json (curated top picks)
 vendor/               three.js r170 and the addons used (map controls, thick lines)
 icons/                App icons
-tools/bake_terrain.py Script that regenerates data/terrain.* from AWS Terrain Tiles
+tools/bake_terrain.py Script that regenerates the terrain files of an area from AWS Terrain Tiles
 ```
 
 ### How it works (short version)
@@ -112,14 +130,17 @@ tools/bake_terrain.py Script that regenerates data/terrain.* from AWS Terrain Ti
 
 ### Changing the map area
 
-Edit `WEST/EAST/SOUTH/NORTH` in `tools/bake_terrain.py`, then run it (it needs Python with Pillow and numpy):
+Edit the area's bounding box in `AREAS` in `tools/bake_terrain.py`, then run it for that area (it needs Python with Pillow and numpy):
 
 ```bash
 pip install pillow numpy
-python3 tools/bake_terrain.py
+python3 tools/bake_terrain.py            # Itacaré → data/
+python3 tools/bake_terrain.py saopaulo   # São Paulo → data/saopaulo/
 ```
 
-The trails and imagery follow the new bounding box automatically. Also update `TOWN` in `index.html` if you move far away.
+The streets, places and imagery follow the new bounding box automatically. Also update that area's `center` in `REGIONS`
+in `index.html` if you move far away. To add a third area, add an entry to `AREAS` and to `REGIONS`, bake its terrain,
+and list its files in `sw.js`.
 If you change any cached file, bump `VERSION` in `sw.js` so installed copies update.
 
 ## Data sources and licences

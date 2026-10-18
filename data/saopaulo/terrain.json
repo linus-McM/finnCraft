@@ -1,0 +1,13 @@
+{
+  "west": -46.745,
+  "east": -46.595,
+  "south": -23.615,
+  "north": -23.505,
+  "width": 640,
+  "height": 512,
+  "sizeX": 15306.018145176393,
+  "sizeZ": 12245.14658315071,
+  "minElevation": 700.8699738828809,
+  "maxElevation": 869.8878181048203,
+  "source": "AWS Terrain Tiles (terrarium), zoom 13"
+}
