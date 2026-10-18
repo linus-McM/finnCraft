@@ -33,6 +33,13 @@ Built with plain HTML + JavaScript and [three.js](https://threejs.org). No build
 - **Works offline after the first visit**: the app, terrain and trail data are cached, and so are the satellite tiles you have loaded.
   You can install it to your home screen.
 
+## São Paulo companion app
+
+The repository also contains **São Paulo Eats & Markets** in [`saopaulo/`](saopaulo/README.md): a 2D Leaflet PWA with the
+city's key markets, restaurants, bars, cafés and sights, rated the same way as the restaurants here (Google rating, review
+count, badge colour by review-count rank), with live GPS and street-network routes from where you are. It deploys with this
+app to `https://<user>.github.io/<repo>/saopaulo/` and shares the Google key injected into `config.js`.
+
 ## Controls
 
 | Action | Phone | Desktop |

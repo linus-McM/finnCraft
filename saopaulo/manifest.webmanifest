@@ -1,0 +1,15 @@
+{
+  "name": "São Paulo Eats & Markets",
+  "short_name": "SP Eats",
+  "description": "Key markets, restaurants, bars and cafés of São Paulo with Google ratings, live GPS and routes from where you are.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "any",
+  "background_color": "#121a2b",
+  "theme_color": "#121a2b",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
