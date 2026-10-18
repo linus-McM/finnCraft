@@ -779,6 +779,8 @@ async function saveOSM(osm) {
   try { await (await caches.open(OSM_CACHE)).put(OSM_KEY, new Response(JSON.stringify(osm), { headers: { 'Content-Type': 'application/json' } })); } catch {}
 }
 
+// Streets in a city are flatter and far more numerous than beach trails, so sample them less often.
+const DENSIFY_STEP = REGION.roads === 'all' ? 12 : 25;
 function densify(latlon) {
   // Convert to local points and insert extra samples so the line hugs the terrain.
   const out = [];
@@ -786,7 +788,7 @@ function densify(latlon) {
     const p = toLocal(latlon[i].lat, latlon[i].lon);
     if (i > 0) {
       const q = out[out.length - 1];
-      const d = Math.hypot(p.x - q.x, p.z - q.z), steps = Math.floor(d / 12);
+      const d = Math.hypot(p.x - q.x, p.z - q.z), steps = Math.floor(d / DENSIFY_STEP);
       for (let s = 1; s < steps; s++) {
         const t = s / steps, x = q.x + (p.x - q.x) * t, z = q.z + (p.z - q.z) * t;
         out.push(new THREE.Vector3(x, heightAt(x, z) + TRAIL_LIFT, z));
@@ -921,7 +923,7 @@ function buildLabels() {
 const tmpV = new THREE.Vector3();
 function updateLabels() {
   if (!settings.show.labels) return;
-  const placed = [];
+  const grid = screenGrid(70, 18);
   const camDist = camera.position.distanceTo(controls.target);
   for (const L of labelEls) {
     tmpV.copy(L.pos); tmpV.y *= settings.exaggeration; tmpV.y += 5;
@@ -932,8 +934,8 @@ function updateLabels() {
     if (!visible) { L.el.style.display = 'none'; continue; }
     const sx = (tmpV.x + 1) / 2 * innerWidth, sy = (1 - tmpV.y) / 2 * innerHeight;
     // Simple collision avoidance: skip labels that would overlap one already placed.
-    if (placed.some(([px, py]) => Math.abs(px - sx) < 70 && Math.abs(py - sy) < 18)) { L.el.style.display = 'none'; continue; }
-    placed.push([sx, sy]);
+    if (grid.hits(sx, sy)) { L.el.style.display = 'none'; continue; }
+    grid.add(sx, sy);
     L.el.style.display = '';
     L.el.style.left = sx + 'px'; L.el.style.top = sy + 'px';
   }
@@ -983,12 +985,33 @@ function buildVenueMarkers() {
   }
 }
 
+// Screen-space collision grid: a city has thousands of venues, so an all-pairs
+// overlap test (quadratic) would take seconds per frame. Cells are one marker
+// footprint wide; a candidate only checks the nine cells around it.
+function screenGrid(w, h) {
+  const cells = new Map();
+  const key = (cx, cy) => cx * 65536 + cy;
+  return {
+    hits(sx, sy) {
+      const cx = Math.floor(sx / w), cy = Math.floor(sy / h);
+      for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
+        const a = cells.get(key(cx + i, cy + j));
+        if (a) for (let k = 0; k < a.length; k += 2) if (Math.abs(a[k] - sx) < w && Math.abs(a[k + 1] - sy) < h) return true;
+      }
+      return false;
+    },
+    add(sx, sy) { const k = key(Math.floor(sx / w), Math.floor(sy / h)); let a = cells.get(k); if (!a) cells.set(k, a = []); a.push(sx, sy); },
+  };
+}
+const MAX_VENUE_MARKERS = 300;   // best-rated first (venueEls is sorted that way), so the cap keeps the best
+
 function updateVenues() {
-  const placed = [];
   const camDist = camera.position.distanceTo(controls.target);
   const showNames = camDist < 1500;
+  const grid = screenGrid(showNames ? 80 : 30, 34);
+  let shown = 0;
   for (const V of venueEls) {
-    let ok = !V.hidden;
+    let ok = !V.hidden && (shown < MAX_VENUE_MARKERS || V.v === selectedVenue);
     let sx, sy;
     if (ok) {
       tmpV.copy(V.pos); tmpV.y *= settings.exaggeration;
@@ -996,11 +1019,10 @@ function updateVenues() {
       tmpV.project(camera);
       ok = tmpV.z < 1 && Math.abs(tmpV.x) < 1.1 && Math.abs(tmpV.y) < 1.1 && d < Math.max(2500, camDist * 1.6);
       sx = (tmpV.x + 1) / 2 * innerWidth; sy = (1 - tmpV.y) / 2 * innerHeight;
-      const w = showNames ? 80 : 30;
-      if (ok && V.v !== selectedVenue && placed.some(([px, py]) => Math.abs(px - sx) < w && Math.abs(py - sy) < 34)) ok = false;
+      if (ok && V.v !== selectedVenue && grid.hits(sx, sy)) ok = false;
     }
     if (!ok) { if (V.shown) { V.el.style.display = 'none'; V.shown = false; } continue; }
-    placed.push([sx, sy]);
+    grid.add(sx, sy); shown++;
     if (!V.shown) { V.el.style.display = ''; V.shown = true; }
     V.el.style.left = sx + 'px'; V.el.style.top = sy + 'px';
     V.el.classList.toggle('sel', V.v === selectedVenue);
@@ -1910,7 +1932,8 @@ $('btnLayers').addEventListener('click', () => {
       (red = fewest, green = most${reviewCounts.length ? `; median ${reviewCounts[reviewCounts.length >> 1]}, top ${reviewCounts[reviewCounts.length - 1]}` : ''}):
       <span style="display:inline-block;vertical-align:middle;width:120px;height:10px;border-radius:5px;background:linear-gradient(90deg,#ff5a5f,#ffb547,#3ddc84)"></span></div>
     <div class="row"><span>Minimum rating</span><input type="range" id="minRating" min="0" max="4.8" step="0.1" value="${settings.minRating}"><b id="minRatingV">${settings.minRating ? settings.minRating.toFixed(1) + '★' : 'any'}</b></div>
-    <div class="row"><button class="pill" id="refreshOsm">Refresh trail &amp; venue data</button></div>
+    <div class="row"><button class="pill" id="refreshOsm">Refresh street &amp; venue data</button><button class="pill" id="resetApp">Reset app data</button></div>
+    <div class="small">Reset clears every cached map, tile and rating for both areas and reloads the app; use it if the app stops loading after an update.</div>
     <h2 style="margin-top:14px">Ratings</h2>
     <div class="small">${BUILT_IN_KEY ? 'Google ratings are built in. Paste a different Google API key below to override it; results are cached for a week.'
       : 'OpenStreetMap has no ratings. To show Google ratings, paste a Google Maps Platform API key with <b>Places API (New)</b> enabled. The key is stored only on this device. Results are cached for a week.'}</div>
@@ -1951,6 +1974,13 @@ $('btnLayers').addEventListener('click', () => {
     loadBaseImagery().then((tex) => { baseTexture?.dispose(); baseTexture = tex; applyLayer(); }).catch(() => toast('Imagery unavailable.'));
   });
   $('refreshOsm').addEventListener('click', () => loadTrails(true));
+  $('resetApp').addEventListener('click', async () => {
+    if (!confirm('Clear all cached data and reload?')) return;
+    try { for (const k of await caches.keys()) await caches.delete(k); } catch {}
+    try { for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister(); } catch {}
+    try { localStorage.clear(); } catch {}
+    location.reload();
+  });
   $('minRating').addEventListener('input', (e) => {
     settings.minRating = +e.target.value;
     $('minRatingV').textContent = settings.minRating ? settings.minRating.toFixed(1) + '★' : 'any';
