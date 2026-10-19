@@ -33,12 +33,12 @@ Built with plain HTML + JavaScript and [three.js](https://threejs.org). No build
 - **Works offline after the first visit**: the app, terrain and trail data are cached, and so are the satellite tiles you have loaded.
   You can install it to your home screen.
 
-## Two areas: Itacaré and São Paulo
+## Three areas: Itacaré, São Paulo and Lima
 
-The same app covers two areas. Tap **⇄ São Paulo** / **⇄ Itacaré** in the title bar (or **Layers → Area**) to switch;
-the choice is remembered, and `?area=saopaulo` in the URL selects it directly (the installed app also offers both as
-home-screen shortcuts). Everything works the same way in both: 3D terrain, OpenStreetMap streets and paths, restaurants,
-bars and cafés with Google ratings, live GPS, and routes from your position.
+The same app covers three areas. Tap the **⇄ area** button in the title bar (or **Layers → Area**) to switch;
+the choice is remembered, and `?area=saopaulo` or `?area=lima` in the URL selects it directly (the installed app also
+offers each as a home-screen shortcut). Everything works the same way in all of them: 3D terrain, OpenStreetMap streets
+and paths, restaurants, bars and cafés with Google ratings, live GPS, and routes from your position.
 
 The São Paulo area covers the CBD, Jardins and the suburbs around them (about 9 × 8 km: Luz, Centro, República,
 Liberdade, Bixiga, Higienópolis, Consolação, Paulista, Jardins, Itaim, Pinheiros, Vila Madalena, Paraíso and Vila Mariana,
@@ -56,7 +56,15 @@ down to Ibirapuera park). Outer suburbs are deliberately left out. Differences f
 - **Terrain**: the city sits at 700–870 m, so the topo tint and contours are relative to the lowest point, and there is no sea.
 
 Picks outside the area box (Mocotó, Mercado de Santo Amaro, CEAGESP, Mercado da Lapa, the Água Branca fair, Komah,
-Bráz and Bar Original in Moema) are kept in the data file but not shown. Pick coordinates were entered
+Bráz and Bar Original in Moema) are kept in the data file but not shown.
+
+### Lima
+
+The Lima area (about 11 × 14 km) covers the tourist districts: Centro Histórico, Pueblo Libre (Museo Larco), San Isidro,
+Miraflores, Surquillo and Barranco, with the Pacific along the west and south. It works like São Paulo (lean street query,
+markets, parks and museums from OpenStreetMap) with its own picks in `data/lima/places.json`: 7 markets, 27 restaurants,
+7 bars, 5 cafés, 18 sights, and the **Hilton Lima Miraflores** as a 🏨 hotel marker that is labelled from any distance.
+Distances in Lima are shown "from hotel". Pick coordinates were entered
 by hand and are approximate until a Google key snaps them to the real listing.
 
 ## Controls
@@ -114,6 +122,7 @@ sw.js                 Service worker that caches files for offline use
 data/terrain.bin      Itacaré elevation grid (512 × 698, int16 decimetres, north row first)
 data/terrain.json     Bounding box, grid size and real-world size of the elevation grid
 data/saopaulo/        The same two files for central São Paulo (512 × 434), plus places.json (curated top picks)
+data/lima/            The same for Lima's tourist districts (512 × 681), plus places.json
 vendor/               three.js r170 and the addons used (map controls, thick lines)
 icons/                App icons
 tools/bake_terrain.py Script that regenerates the terrain files of an area from AWS Terrain Tiles
@@ -138,6 +147,7 @@ Edit the area's bounding box in `AREAS` in `tools/bake_terrain.py`, then run it 
 pip install pillow numpy
 python3 tools/bake_terrain.py            # Itacaré → data/
 python3 tools/bake_terrain.py saopaulo   # São Paulo → data/saopaulo/
+python3 tools/bake_terrain.py lima       # Lima → data/lima/
 ```
 
 The streets, places and imagery follow the new bounding box automatically. Also update that area's `center` in `REGIONS`

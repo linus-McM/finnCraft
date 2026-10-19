@@ -1,7 +1,7 @@
 {
-  "name": "Itacaré · São Paulo 3D",
+  "name": "Itacaré · São Paulo · Lima 3D",
   "short_name": "3D Trails",
-  "description": "3D terrain map of Itacaré (Bahia) and central São Paulo: trails, streets, markets and restaurants with Google ratings, live GPS and routes.",
+  "description": "3D terrain map of Itacaré (Bahia), central São Paulo and Lima: trails, streets, markets and restaurants with Google ratings, live GPS and routes.",
   "start_url": "./",
   "scope": "./",
   "display": "fullscreen",
@@ -36,6 +36,16 @@
     {
       "name": "São Paulo",
       "url": "./?area=saopaulo",
+      "icons": [
+        {
+          "src": "icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
+    },
+    {
+      "name": "Lima",
+      "url": "./?area=lima",
       "icons": [
         {
           "src": "icons/icon-192.png",

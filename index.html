@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<title>Itacaré · São Paulo 3D</title>
-<meta name="description" content="3D terrain map of Itacaré (Bahia) and central São Paulo: trails, streets, markets, restaurants with Google ratings, live GPS and routes.">
+<title>Itacaré · São Paulo · Lima 3D</title>
+<meta name="description" content="3D terrain map of Itacaré (Bahia), central São Paulo and Lima's tourist districts: trails, streets, markets, restaurants with Google ratings, live GPS and routes.">
 <meta name="theme-color" content="#0b1d26">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -38,6 +38,7 @@
   .label.place { color: #ffffff; font-size: 13px; }
   .label.poi { color: #9ff0ff; font-weight: 500; }
   .label.market { color: #ffd34d; font-weight: 700; }
+  .label.hotel { color: #ff8fd8; font-weight: 700; font-size: 13px; }
   .label.pick { text-decoration: underline dotted; }
 
   /* Food & drink markers */
@@ -232,6 +233,19 @@ const REGIONS = {
     ],
     loading: 'Building 3D São Paulo…',
   },
+  lima: {
+    name: 'Lima', title: 'Lima 3D', blurb: 'Miraflores · Barranco · San Isidro · Centro Histórico: markets, restaurants, sights, from the Hilton',
+    data: 'data/lima', coast: true, center: { lat: -12.1248, lon: -77.0283 }, centerName: 'hotel',
+    searchSuffix: 'Lima Peru', osmCache: 'lima-osm-v1', ratingsCache: 'lima-ratings-v1',
+    buildings: false, roads: 'streets', routes: false, overpassTimeout: 180, curated: 'data/lima/places.json',
+    ratingRects: [
+      { low: { latitude: -12.1350, longitude: -77.0480 }, high: { latitude: -12.1050, longitude: -77.0150 } },   // Miraflores
+      { low: { latitude: -12.1560, longitude: -77.0320 }, high: { latitude: -12.1350, longitude: -77.0100 } },   // Barranco
+      { low: { latitude: -12.1050, longitude: -77.0550 }, high: { latitude: -12.0850, longitude: -77.0200 } },   // San Isidro / Surquillo
+      { low: { latitude: -12.0600, longitude: -77.0450 }, high: { latitude: -12.0350, longitude: -77.0150 } },   // Centro Histórico
+    ],
+    loading: 'Building 3D Lima…',
+  },
 };
 const REGION_ID = (() => {
   const q = new URLSearchParams(location.search).get('area');
@@ -249,7 +263,7 @@ function switchArea(id) {
 document.title = REGION.title;
 $('title').textContent = REGION.title;
 $('loadtitle').textContent = REGION.loading;
-$('btnArea').textContent = '⇄ ' + Object.values(REGIONS).find((r) => r !== REGION).name;
+$('btnArea').textContent = '⇄ ' + REGION.name;
 const BUILT_IN_KEY = (window.ITACARE_CONFIG && window.ITACARE_CONFIG.googleKey) || '';
 const settings = Object.assign({ layer: 'satellite', imagery: 'esri', hires: true, exaggeration: 1.5, minRating: 0, googleKey: '', routeMode: 'moped' }, savedSettings, {
   show: Object.assign({ route: true, path: true, track: true, steps: true, road: true, labels: true,
@@ -888,11 +902,12 @@ function mergeCurated() {
       else venues.push({ id: 'c' + c.id, name: c.name, group: c.group, icon: { bar: '🍹', cafe: '☕' }[c.group] || '🍽️', kind: c.kind,
         lat: c.lat, lon: c.lon, tags: c.hours ? { opening_hours: c.hours } : {}, source: 'curated', pick: c });
     } else {
-      const kind = c.group === 'market' ? 'market' : 'attraction';
+      const kind = c.group === 'market' ? 'market' : c.group === 'hotel' ? 'hotel' : 'attraction';
+      const rank = c.group === 'hotel' ? 0 : 1;   // the hotel is labelled from any distance
       let match = null, best = 300;
       for (const p of pois) { if (!sameName(p.name, c.name)) continue; const d = haversine(p, c); if (d < best) { best = d; match = p; } }
-      if (match) { match.pick = c; match.rank = Math.min(match.rank, 1); }
-      else pois.push({ id: 'c' + c.id, name: c.name, kind, group: PLACE_KINDS[kind].group, lat: c.lat, lon: c.lon, rank: 1, pick: c });
+      if (match) { match.pick = c; match.kind = kind; match.rank = Math.min(match.rank, rank); }
+      else pois.push({ id: 'c' + c.id, name: c.name, kind, group: PLACE_KINDS[kind].group, lat: c.lat, lon: c.lon, rank, pick: c });
     }
   }
 }
@@ -912,7 +927,7 @@ function buildLabels() {
   pois.sort((a, b) => a.rank - b.rank);
   for (const p of pois) {
     const el = document.createElement('div');
-    el.className = 'label ' + (p.kind === 'beach' ? 'beach' : p.group === 'town' ? 'place' : p.group === 'market' ? 'market' : 'poi') + (p.pick ? ' pick' : '');
+    el.className = 'label ' + (p.kind === 'beach' ? 'beach' : p.kind === 'hotel' ? 'hotel' : p.group === 'town' ? 'place' : p.group === 'market' ? 'market' : 'poi') + (p.pick ? ' pick' : '');
     el.textContent = p.name;
     el.addEventListener('click', (e) => { e.stopPropagation(); selectPlace(p); });
     root.appendChild(el);
@@ -1218,6 +1233,7 @@ const PLACE_KINDS = {
   surf:      { icon: '🏄', label: 'Surf spot', group: 'beach' },
   market:    { icon: '🧺', label: 'Market', group: 'market' },
   park:      { icon: '🌳', label: 'Park', group: 'sight' },
+  hotel:     { icon: '🏨', label: 'Hotel', group: 'sight' },
 };
 const PLACE_GROUPS = { market: 'Markets', beach: 'Beaches', sight: 'Sights', town: 'Towns' };
 
@@ -2003,7 +2019,7 @@ $('btnLayers').addEventListener('click', () => {
 
 $('btnArea').addEventListener('click', () => {
   openSheet(`<h2>Choose an area</h2><ul class="list" id="areas">
-    ${Object.entries(REGIONS).map(([k, r]) => `<li data-v="${k}"><span>${k === REGION_ID ? '✅' : k === 'itacare' ? '🏝️' : '🏙️'}</span>
+    ${Object.entries(REGIONS).map(([k, r]) => `<li data-v="${k}"><span>${k === REGION_ID ? '✅' : k === 'itacare' ? '🏝️' : k === 'lima' ? '🌊' : '🏙️'}</span>
       <span class="nm"><b>${r.name}</b><br><span class="small">${escapeHtml(r.blurb)}</span></span></li>`).join('')}</ul>
     <div class="small" style="margin-top:6px">Switching reloads the app for that area. Each area keeps its own cached map data and ratings.</div>`);
   $('areas').addEventListener('click', (e) => { const li = e.target.closest('li'); if (li) switchArea(li.dataset.v); });
@@ -2037,7 +2053,7 @@ function showPlacesList() {
   };
   openSheet(`${listTabs('places')}<div class="row"><div class="seg" id="grp"><button data-v="all" class="on">All</button>
     ${Object.entries(PLACE_GROUPS).map(([k, g]) => `<button data-v="${k}">${g}</button>`).join('')}</div></div>
-    <input type="search" id="q" placeholder="${REGION.coast ? 'Search beaches, sights, towns…' : 'Search markets, sights, neighbourhoods…'}"><ul class="list" id="tl"></ul>
+    <input type="search" id="q" placeholder="${REGION.roads === 'all' ? 'Search beaches, sights, towns…' : 'Search markets, sights, neighbourhoods…'}"><ul class="list" id="tl"></ul>
     ${gps.fix ? '' : '<div class="small" style="margin-top:6px">Turn on location (bottom-right button) to sort by distance and route from where you are.</div>'}`);
   bindListTabs();
   $('tl').innerHTML = render();

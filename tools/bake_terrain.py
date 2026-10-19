@@ -9,7 +9,7 @@ SRTM/other DEMs). Each PNG pixel encodes elevation as:
 The output grid is sampled uniformly in Web Mercator space so it lines up
 exactly with mercator image tiles used for the satellite texture.
 
-Usage:  python3 tools/bake_terrain.py [itacare|saopaulo]
+Usage:  python3 tools/bake_terrain.py [itacare|saopaulo|lima]
 Requires: Pillow, numpy
 """
 import io
@@ -31,6 +31,9 @@ AREAS = {
     # suburbs around it (Higienópolis, Consolação, Bixiga, Paraíso, Vila Mariana,
     # Itaim, Pinheiros, Vila Madalena) down to Ibirapuera park.
     "saopaulo": dict(west=-46.705, east=-46.615, south=-23.595, north=-23.525, grid_w=512, coast=False, out="data/saopaulo"),
+    # Lima's tourist districts: Centro Histórico, Pueblo Libre (Museo Larco), San Isidro,
+    # Miraflores, Surquillo and Barranco. The Pacific is to the west and south.
+    "lima": dict(west=-77.085, east=-76.985, south=-12.165, north=-12.035, grid_w=512, coast=True, sea=("west", "south"), out="data/lima"),
 }
 AREA = AREAS[sys.argv[1] if len(sys.argv) > 1 else "itacare"]
 WEST, EAST = AREA["west"], AREA["east"]
@@ -58,13 +61,18 @@ def fetch_tile(z, x, y):
     return a[:, :, 0] * 256 + a[:, :, 1] + a[:, :, 2] / 256 - 32768
 
 
-def flatten_ocean(h, threshold=2.0):
-    """Flood-fill low cells connected to the east (Atlantic) edge and set them
+def flatten_ocean(h, edges=("east",), threshold=2.0):
+    """Flood-fill low cells connected to the given sea edges and set them
     to -2 m so the sea renders flat under the water plane. Low-lying land
     (the town, river flats) that isn't connected to the open sea is kept."""
     low = h < threshold
     sea = np.zeros_like(low)
-    stack = [(y, h.shape[1] - 1) for y in range(h.shape[0]) if low[y, -1]]
+    H, W = h.shape
+    stack = []
+    if "east" in edges: stack += [(y, W - 1) for y in range(H) if low[y, W - 1]]
+    if "west" in edges: stack += [(y, 0) for y in range(H) if low[y, 0]]
+    if "south" in edges: stack += [(H - 1, x) for x in range(W) if low[H - 1, x]]
+    if "north" in edges: stack += [(0, x) for x in range(W) if low[0, x]]
     while stack:
         y, x = stack.pop()
         if sea[y, x] or not low[y, x]:
@@ -108,7 +116,7 @@ def main():
     h = (mosaic[y0, x0] * (1 - fx) * (1 - fy) + mosaic[y0, x0 + 1] * fx * (1 - fy)
          + mosaic[y0 + 1, x0] * (1 - fx) * fy + mosaic[y0 + 1, x0 + 1] * fx * fy)
     if AREA["coast"]:
-        h = flatten_ocean(h)
+        h = flatten_ocean(h, AREA.get("sea", ("east",)))
 
     # Stored as little-endian int16 decimetres, row-major, north row first.
     dm = np.round(h * 10).astype("<i2")
